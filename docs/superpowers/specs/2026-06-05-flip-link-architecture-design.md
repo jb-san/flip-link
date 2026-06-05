@@ -225,11 +225,20 @@ Slices 0–2;** Slices 3–4 are documented direction.
 
 ## 10. Testing
 
+**The `flip-cli` is the primary testing harness.** The full stack (CLI → daemon →
+device → instrument) is exercised and verified end-to-end by driving real `flip ...`
+commands and asserting on their behaviour/output — not by bespoke integration
+binaries. Each slice is "done" when its CLI commands work against hardware. The lower
+layers carry their own fast, hardware-free tests underneath:
+
+- **End-to-end (primary):** `flip ...` commands drive every slice. Slice 0 is verified
+  with `flip status` / a PING round-trip through the CLI; Slice 1 with `flip ir
+  capture`/`transmit`; Slice 2 with `flip i2c scan`/`read`/`write`. Hardware-dependent
+  CLI runs are gated behind an env flag (the prototype's `FLIPPER_HW=1` pattern); the
+  operator launches the FAP on-device.
 - `flip-proto`: unit tests + golden vectors shared with the device.
 - `flip-core` / daemon: mock transport (no hardware) covering session, multiplexing,
   ownership, and reconnect/re-enumeration logic.
-- Hardware integration: gated behind an env flag (the prototype's `FLIPPER_HW=1`
-  pattern); operator launches the FAP on-device.
 
 ## 11. Risks / open questions
 
