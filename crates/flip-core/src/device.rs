@@ -32,9 +32,8 @@ impl<T: Transport> DeviceLink<T> {
         self.send(MsgType::Hello, seq, &body)?;
         let frame = self.await_seq(seq, timeout)?;
         match frame.typ {
-            MsgType::Caps => {
-                flip_proto::messages::from_payload(&frame.payload).map_err(|e| anyhow!("decode CAPS: {e}"))
-            }
+            MsgType::Caps => flip_proto::messages::from_payload(&frame.payload)
+                .map_err(|e| anyhow!("decode CAPS: {e}")),
             other => Err(anyhow!("expected CAPS, got {:?}", other)),
         }
     }
@@ -57,9 +56,8 @@ impl<T: Transport> DeviceLink<T> {
         self.send(MsgType::Req, seq, &body)?;
         let frame = self.await_seq(seq, timeout)?;
         match frame.typ {
-            MsgType::Resp => {
-                flip_proto::messages::from_payload(&frame.payload).map_err(|e| anyhow!("decode RESP: {e}"))
-            }
+            MsgType::Resp => flip_proto::messages::from_payload(&frame.payload)
+                .map_err(|e| anyhow!("decode RESP: {e}")),
             MsgType::Error => {
                 let e: flip_proto::AgentError = flip_proto::messages::from_payload(&frame.payload)
                     .map_err(|e| anyhow!("decode ERROR: {e}"))?;

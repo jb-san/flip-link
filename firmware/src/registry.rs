@@ -2,8 +2,8 @@
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use flip_proto::messages::{Caps, Instrument, PROTOCOL_VERSION};
 use flip_proto::Value;
+use flip_proto::messages::{Caps, Instrument, PROTOCOL_VERSION};
 
 use crate::sys_instrument;
 

@@ -79,9 +79,8 @@ fn serve_client(
             let client_seq = frame.seq;
             let dev_seq = router.register(reply_tx.clone());
             let mut buf = vec![0u8; flip_proto::HEADER_SIZE + frame.payload.len() + 2];
-            let n =
-                flip_proto::encode(frame.typ, frame.flags, dev_seq, &frame.payload, &mut buf)
-                    .expect("reframe");
+            let n = flip_proto::encode(frame.typ, frame.flags, dev_seq, &frame.payload, &mut buf)
+                .expect("reframe");
             outbound.send(buf[..n].to_vec()).ok();
 
             match reply_rx.recv_timeout(Duration::from_secs(3)) {

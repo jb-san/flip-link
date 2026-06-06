@@ -16,7 +16,9 @@ pub mod value;
 pub mod messages;
 
 pub use crc16::crc16_ccitt_false;
-pub use frame::{decode, encode, DecodeResult, Frame, MsgType, FRAME_MAGIC, HEADER_SIZE, MAX_PAYLOAD};
+pub use frame::{
+    decode, encode, DecodeResult, Frame, MsgType, FRAME_MAGIC, HEADER_SIZE, MAX_PAYLOAD,
+};
 
 #[cfg(feature = "alloc")]
 pub use value::Value;

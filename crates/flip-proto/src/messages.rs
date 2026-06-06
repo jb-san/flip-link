@@ -89,7 +89,10 @@ mod tests {
         let req = Req {
             instrument: "sys".to_string(),
             opcode: "echo".to_string(),
-            params: Value::Map(alloc::vec![("msg".to_string(), Value::Text("hi".to_string()))]),
+            params: Value::Map(alloc::vec![(
+                "msg".to_string(),
+                Value::Text("hi".to_string())
+            )]),
         };
         let payload = to_payload(&req);
         let back: Req = from_payload(&payload).unwrap();

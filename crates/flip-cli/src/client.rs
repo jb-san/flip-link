@@ -151,7 +151,10 @@ pub fn render_value(v: &flip_proto::Value) -> String {
         U64(n) => n.to_string(),
         I64(n) => n.to_string(),
         Text(s) => s.clone(),
-        Bytes(b) => format!("0x{}", b.iter().map(|x| format!("{x:02x}")).collect::<String>()),
+        Bytes(b) => format!(
+            "0x{}",
+            b.iter().map(|x| format!("{x:02x}")).collect::<String>()
+        ),
         Array(a) => {
             let inner = a.iter().map(render_value).collect::<Vec<_>>().join(", ");
             format!("[{inner}]")

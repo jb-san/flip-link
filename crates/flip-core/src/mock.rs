@@ -1,6 +1,8 @@
 use crate::transport::{FrameReader, Transport};
 use anyhow::Result;
-use flip_proto::messages::{from_payload, to_payload, Caps, Instrument, Req, Resp, PROTOCOL_VERSION};
+use flip_proto::messages::{
+    from_payload, to_payload, Caps, Instrument, Req, Resp, PROTOCOL_VERSION,
+};
 use flip_proto::{encode, MsgType, Value};
 use std::collections::VecDeque;
 
@@ -99,7 +101,11 @@ impl Transport for ControlLoopback {
                 }
                 MsgType::Req => {
                     let req: Req = from_payload(&f.payload).unwrap();
-                    let result = if req.opcode == "echo" { req.params } else { Value::Null };
+                    let result = if req.opcode == "echo" {
+                        req.params
+                    } else {
+                        Value::Null
+                    };
                     let body = to_payload(&Resp { ok: true, result });
                     self.queue(MsgType::Resp, f.seq, &body);
                 }

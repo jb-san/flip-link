@@ -1,17 +1,17 @@
 #![no_main]
 #![no_std]
 
-extern crate flipperzero_rt;
 extern crate alloc;
 extern crate flipperzero_alloc;
+extern crate flipperzero_rt;
 
 mod registry;
 mod sys_instrument;
 
-use core::ffi::{c_void, CStr};
+use core::ffi::{CStr, c_void};
 use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
-use flip_proto::{decode, encode, DecodeResult, MsgType};
+use flip_proto::{DecodeResult, MsgType, decode, encode};
 use flipperzero_rt::{entry, manifest};
 use flipperzero_sys as sys;
 
@@ -116,7 +116,7 @@ fn send_msg<T: minicbor::Encode<()>>(typ: MsgType, seq: u16, body: &T) {
 /// Handle one decoded control frame (HELLO/REQ); PING is handled inline in the
 /// drain loop. Unknown/other types are ignored.
 fn handle_frame(typ: MsgType, seq: u16, payload: &[u8]) {
-    use flip_proto::messages::{from_payload, AgentError, Req, Resp};
+    use flip_proto::messages::{AgentError, Req, Resp, from_payload};
     match typ {
         MsgType::Hello => {
             let caps = registry::build_caps();

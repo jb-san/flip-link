@@ -31,6 +31,7 @@ impl Value {
 }
 
 impl<C> minicbor::Encode<C> for Value {
+    #[allow(clippy::only_used_in_recursion)]
     fn encode<W: Write>(
         &self,
         e: &mut Encoder<W>,
@@ -74,6 +75,7 @@ impl<C> minicbor::Encode<C> for Value {
 }
 
 impl<'b, C> minicbor::Decode<'b, C> for Value {
+    #[allow(clippy::only_used_in_recursion)]
     fn decode(d: &mut Decoder<'b>, ctx: &mut C) -> Result<Self, DecodeError> {
         match d.datatype()? {
             Type::Null => {
