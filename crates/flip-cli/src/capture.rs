@@ -62,7 +62,8 @@ pub fn run(auto_end_ms: Option<u64>, output: Option<&str>) -> Result<()> {
                 ir::decode_stream_data(&payload, &mut timings);
             }
             Some((MsgType::StreamStop, payload)) => {
-                if let Ok(s) = flip_proto::messages::from_payload::<flip_proto::StreamStop>(&payload)
+                if let Ok(s) =
+                    flip_proto::messages::from_payload::<flip_proto::StreamStop>(&payload)
                 {
                     if s.dropped > 0 {
                         eprintln!("warning: {} samples dropped (buffer overflow)", s.dropped);

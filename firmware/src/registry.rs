@@ -67,8 +67,7 @@ pub fn build_caps() -> Caps {
     let instruments = INSTRUMENTS
         .iter()
         .map(|i| {
-            let mut opcodes: Vec<String> =
-                i.opcodes.iter().map(|o| o.opcode.to_string()).collect();
+            let mut opcodes: Vec<String> = i.opcodes.iter().map(|o| o.opcode.to_string()).collect();
             opcodes.extend(i.streaming_opcodes.iter().map(|s| s.to_string()));
             Instrument {
                 id: i.id.to_string(),

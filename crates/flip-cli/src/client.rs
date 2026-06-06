@@ -300,7 +300,11 @@ impl StreamConn {
 /// Open a streaming connection by sending a REQ; returns the connection so the
 /// caller can read STREAM_* frames. (The daemon switches the route to a stream
 /// relay when the device replies STREAM_START.)
-pub fn open_stream(instrument: &str, opcode: &str, params: flip_proto::Value) -> Result<StreamConn> {
+pub fn open_stream(
+    instrument: &str,
+    opcode: &str,
+    params: flip_proto::Value,
+) -> Result<StreamConn> {
     let stream = connect()?;
     stream.set_read_timeout(Some(Duration::from_millis(50)))?;
     let mut transport = StreamTransport(stream);
@@ -311,7 +315,8 @@ pub fn open_stream(instrument: &str, opcode: &str, params: flip_proto::Value) ->
     };
     let body = flip_proto::messages::to_payload(&req);
     let mut buf = vec![0u8; flip_proto::HEADER_SIZE + body.len() + 2];
-    let n = encode(MsgType::Req, 0, 1, &body, &mut buf).ok_or_else(|| anyhow!("payload too big"))?;
+    let n =
+        encode(MsgType::Req, 0, 1, &body, &mut buf).ok_or_else(|| anyhow!("payload too big"))?;
     transport.write_all(&buf[..n])?;
     Ok(StreamConn {
         transport,

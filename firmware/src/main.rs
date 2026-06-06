@@ -140,7 +140,11 @@ fn send_stream_data(seq: u16, raw: &[u8]) {
 
 /// Send the final STREAM_STOP frame with a `{dropped}` body.
 fn send_stream_stop(seq: u16, dropped: u32) {
-    send_msg(MsgType::StreamStop, seq, &flip_proto::StreamStop { dropped });
+    send_msg(
+        MsgType::StreamStop,
+        seq,
+        &flip_proto::StreamStop { dropped },
+    );
 }
 
 /// Send an ERROR frame with a `{code,message}` body.
@@ -168,9 +172,11 @@ fn handle_frame(typ: MsgType, seq: u16, payload: &[u8]) {
             Ok(req) => {
                 // ir.capture is a streaming op — it starts a STREAM, not a RESP.
                 if req.instrument == "ir" && req.opcode == "capture" {
-                    ir_instrument::start_capture(seq, send_stream_start, |s: u16, c: u32, m: &str| {
-                        send_error(s, c, m)
-                    });
+                    ir_instrument::start_capture(
+                        seq,
+                        send_stream_start,
+                        |s: u16, c: u32, m: &str| send_error(s, c, m),
+                    );
                 } else {
                     match registry::dispatch(&req.instrument, &req.opcode, &req.params) {
                         Ok(result) => send_msg(MsgType::Resp, seq, &Resp { ok: true, result }),

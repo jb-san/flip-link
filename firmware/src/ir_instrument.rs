@@ -5,8 +5,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU16, AtomicU32, AtomicUsize, Ordering};
 
-use flip_proto::messages::{ERR_BAD_PARAMS, ERR_BUSY, ERR_OVERSIZED};
 use flip_proto::Value;
+use flip_proto::messages::{ERR_BAD_PARAMS, ERR_BUSY, ERR_OVERSIZED};
 use flipperzero_sys as sys;
 
 const DEFAULT_FREQ: u32 = 38_000;

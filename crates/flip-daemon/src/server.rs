@@ -104,7 +104,14 @@ fn serve_client(
                 Ok(reply) if reply.typ == MsgType::StreamStart => {
                     // Streaming: relay until the final STREAM_STOP.
                     write_frame(&mut stream, reply.typ, client_seq, &reply.payload)?;
-                    relay_stream(&mut stream, &reply_rx, &router, &outbound, client_seq, dev_seq)?;
+                    relay_stream(
+                        &mut stream,
+                        &reply_rx,
+                        &router,
+                        &outbound,
+                        client_seq,
+                        dev_seq,
+                    )?;
                 }
                 Ok(reply) => {
                     // One-shot RESP/ERROR.
