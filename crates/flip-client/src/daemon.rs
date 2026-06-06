@@ -104,6 +104,7 @@ fn spawn_daemon() -> Result<()> {
 }
 
 /// Report daemon + device status WITHOUT spawning a daemon. Prints one block.
+#[allow(dead_code)]
 pub fn daemon_status() {
     let stream = match try_connect() {
         Some(s) => s,
