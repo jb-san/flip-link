@@ -39,6 +39,7 @@ impl Transport for StreamTransport {
     }
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
         match self.0.read(buf) {
+            Ok(0) => Err(anyhow!("daemon socket closed")),
             Ok(n) => Ok(n),
             Err(e)
                 if e.kind() == std::io::ErrorKind::WouldBlock
@@ -356,5 +357,22 @@ pub fn ping_through_daemon(payload: &[u8], timeout: Duration) -> Result<Vec<u8>>
         } else {
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stream_transport_read_reports_eof_as_error() {
+        let (client, server) = UnixStream::pair().unwrap();
+        drop(server);
+        let mut transport = StreamTransport(client);
+        let mut buf = [0u8; 16];
+
+        let err = transport.read(&mut buf).unwrap_err();
+
+        assert_eq!(err.to_string(), "daemon socket closed");
     }
 }

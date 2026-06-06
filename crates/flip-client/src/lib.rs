@@ -42,6 +42,7 @@ pub fn ir_transmit(signal: &IrSignal, timeout: Duration) -> Result<u64> {
 
 pub fn ir_capture(auto_end: Option<Duration>, cancel: &dyn Fn() -> bool) -> Result<IrSignal> {
     let mut conn = daemon::open_stream("ir", "capture", Value::Null)?;
+    expect_capture_stream_start(&mut conn)?;
     let mut raw = Vec::new();
     let mut last_data = Instant::now();
     let mut saw_final_stop = false;
@@ -63,7 +64,10 @@ pub fn ir_capture(auto_end: Option<Duration>, cancel: &dyn Fn() -> bool) -> Resu
                 break;
             }
             Some((MsgType::Error, payload)) => return Err(decode_agent_error(&payload)),
-            Some(_) | None => {}
+            Some((other, _)) => {
+                return Err(anyhow!("unexpected frame during IR capture: {other:?}"))
+            }
+            None => {}
         }
 
         if let Some(gap) = auto_end {
@@ -97,7 +101,12 @@ fn drain_capture_stop(conn: &mut daemon::StreamConn, raw: &mut Vec<u64>) -> Resu
                 return Ok(());
             }
             Some((MsgType::Error, payload)) => return Err(decode_agent_error(&payload)),
-            _ => {}
+            Some((other, _)) => {
+                return Err(anyhow!(
+                    "unexpected frame while stopping IR capture: {other:?}"
+                ));
+            }
+            None => {}
         }
 
         if Instant::now() >= deadline {
@@ -106,14 +115,46 @@ fn drain_capture_stop(conn: &mut daemon::StreamConn, raw: &mut Vec<u64>) -> Resu
     }
 }
 
-fn handle_capture_stop(payload: &[u8]) -> Result<()> {
-    if let Ok(stop) = flip_proto::messages::from_payload::<flip_proto::StreamStop>(payload) {
-        if stop.dropped > 0 {
-            return Err(anyhow!(
-                "IR capture dropped {} samples (buffer overflow)",
-                stop.dropped
-            ));
+fn expect_capture_stream_start(conn: &mut daemon::StreamConn) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if let Some((typ, payload)) = conn.next_frame(Duration::from_millis(50))? {
+            return validate_capture_stream_start_frame(typ, &payload);
         }
+
+        if Instant::now() >= deadline {
+            return Err(anyhow!("timed out waiting for IR capture stream start"));
+        }
+    }
+}
+
+fn validate_capture_stream_start_frame(typ: MsgType, payload: &[u8]) -> Result<()> {
+    match typ {
+        MsgType::StreamStart => {
+            let start: flip_proto::StreamStart = flip_proto::messages::from_payload(payload)
+                .map_err(|e| anyhow!("decode STREAM_START: {e}"))?;
+            if start.format != flip_proto::messages::STREAM_FORMAT_RAW_I32_US {
+                return Err(anyhow!(
+                    "unsupported IR capture stream format {} (expected {})",
+                    start.format,
+                    flip_proto::messages::STREAM_FORMAT_RAW_I32_US
+                ));
+            }
+            Ok(())
+        }
+        MsgType::Error => Err(decode_agent_error(payload)),
+        other => Err(anyhow!("expected STREAM_START, got {other:?}")),
+    }
+}
+
+fn handle_capture_stop(payload: &[u8]) -> Result<()> {
+    let stop: flip_proto::StreamStop = flip_proto::messages::from_payload(payload)
+        .map_err(|e| anyhow!("decode STREAM_STOP: {e}"))?;
+    if stop.dropped > 0 {
+        return Err(anyhow!(
+            "IR capture dropped {} samples (buffer overflow)",
+            stop.dropped
+        ));
     }
     Ok(())
 }
@@ -186,7 +227,38 @@ mod tests {
     }
 
     #[test]
-    fn capture_stop_tolerates_undecodable_payload() {
-        assert!(handle_capture_stop(&[0xff]).is_ok());
+    fn capture_stop_rejects_undecodable_payload() {
+        let err = handle_capture_stop(&[0xff]).unwrap_err();
+
+        assert!(err.to_string().starts_with("decode STREAM_STOP:"));
+    }
+
+    #[test]
+    fn capture_stream_start_accepts_raw_i32_format() {
+        let payload = flip_proto::messages::to_payload(&flip_proto::StreamStart {
+            format: flip_proto::messages::STREAM_FORMAT_RAW_I32_US.to_string(),
+        });
+
+        assert!(validate_capture_stream_start_frame(MsgType::StreamStart, &payload).is_ok());
+    }
+
+    #[test]
+    fn capture_stream_start_rejects_wrong_format() {
+        let payload = flip_proto::messages::to_payload(&flip_proto::StreamStart {
+            format: "raw_f32".to_string(),
+        });
+        let err = validate_capture_stream_start_frame(MsgType::StreamStart, &payload).unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "unsupported IR capture stream format raw_f32 (expected raw_int32_le_us)"
+        );
+    }
+
+    #[test]
+    fn capture_stream_start_rejects_unexpected_frame() {
+        let err = validate_capture_stream_start_frame(MsgType::Resp, &[]).unwrap_err();
+
+        assert_eq!(err.to_string(), "expected STREAM_START, got Resp");
     }
 }

@@ -112,7 +112,7 @@ fn parse_directive_u32(name: &str, rest: &str) -> Result<u32> {
         .map_err(|_| anyhow::anyhow!("invalid {name} value '{token}'"))
 }
 
-pub fn decode_stream_data(payload: &[u8], out: &mut Vec<u64>) -> usize {
+pub(crate) fn decode_stream_data(payload: &[u8], out: &mut Vec<u64>) -> usize {
     let mut count = 0;
     for chunk in payload.chunks_exact(4) {
         let value = i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);

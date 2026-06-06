@@ -49,9 +49,9 @@ enum DaemonCmd {
 
 #[derive(Subcommand)]
 enum IrCmd {
-    /// Transmit IR timings from a file.
+    /// Transmit an IR signal record from a file.
     Transmit {
-        /// Path to a file of whitespace/newline-separated µs timings.
+        /// Path to an IR signal record file.
         #[arg(long)]
         file: String,
         /// Override carrier frequency in Hz from the signal file.
@@ -61,10 +61,10 @@ enum IrCmd {
         #[arg(long)]
         duty: Option<u32>,
     },
-    /// Capture IR timings to a file (or stdout). Stops on Ctrl-C, or after a
-    /// silence gap with --auto-end.
+    /// Capture an IR signal record to a file (or stdout). Stops on Ctrl-C, or
+    /// after a silence gap with --auto-end.
     Capture {
-        /// Write timings here (default: stdout).
+        /// Write signal record here (default: stdout).
         #[arg(long)]
         output: Option<String>,
         /// Auto-stop after this many ms of silence (default: run until Ctrl-C).
