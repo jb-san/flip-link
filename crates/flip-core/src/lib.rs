@@ -1,7 +1,7 @@
-pub mod transport;
+pub mod device;
 pub mod mock;
 pub mod serial;
-pub mod device;
+pub mod transport;
 
-pub use transport::{FrameReader, OwnedFrame, Transport};
 pub use device::DeviceLink;
+pub use transport::{FrameReader, OwnedFrame, Transport};

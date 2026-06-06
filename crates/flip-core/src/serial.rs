@@ -30,7 +30,9 @@ pub fn pick_agent_port() -> Result<String> {
     }
     let ports = list_flipper_ports()?;
     match ports.len() {
-        0 => Err(anyhow!("no Flipper serial ports found (is it connected and the FAP running?)")),
+        0 => Err(anyhow!(
+            "no Flipper serial ports found (is it connected and the FAP running?)"
+        )),
         1 => Ok(ports.into_iter().next().unwrap()),
         _ => Ok(ports.into_iter().last().unwrap()), // sorted; highest = interface 1
     }

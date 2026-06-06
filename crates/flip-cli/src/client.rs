@@ -26,8 +26,12 @@ impl Transport for StreamTransport {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
         match self.0.read(buf) {
             Ok(n) => Ok(n),
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
-                || e.kind() == std::io::ErrorKind::TimedOut => Ok(0),
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                Ok(0)
+            }
             Err(e) => Err(e.into()),
         }
     }
@@ -57,7 +61,11 @@ fn spawn_daemon() -> Result<()> {
     // Prefer a sibling `flip-daemon` next to this binary; fall back to PATH.
     let exe = std::env::current_exe().context("current exe")?;
     let candidate = exe.with_file_name("flip-daemon");
-    let program = if candidate.exists() { candidate } else { PathBuf::from("flip-daemon") };
+    let program = if candidate.exists() {
+        candidate
+    } else {
+        PathBuf::from("flip-daemon")
+    };
     Command::new(program)
         .arg("run")
         .spawn()
@@ -73,7 +81,8 @@ pub fn ping_through_daemon(payload: &[u8], timeout: Duration) -> Result<Vec<u8>>
     let mut reader = FrameReader::new();
 
     let mut enc = [0u8; 1100];
-    let n = encode(MsgType::Ping, 0, 1, payload, &mut enc).ok_or_else(|| anyhow!("payload too big"))?;
+    let n =
+        encode(MsgType::Ping, 0, 1, payload, &mut enc).ok_or_else(|| anyhow!("payload too big"))?;
     t.write_all(&enc[..n])?;
 
     let deadline = Instant::now() + timeout;

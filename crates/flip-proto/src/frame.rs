@@ -67,13 +67,7 @@ pub enum DecodeResult<'a> {
 
 /// Encode a frame into `out`. Returns bytes written, or `None` if `out` is too small
 /// or the payload exceeds `MAX_PAYLOAD`.
-pub fn encode(
-    typ: MsgType,
-    flags: u8,
-    seq: u16,
-    payload: &[u8],
-    out: &mut [u8],
-) -> Option<usize> {
+pub fn encode(typ: MsgType, flags: u8, seq: u16, payload: &[u8], out: &mut [u8]) -> Option<usize> {
     if payload.len() as u32 > MAX_PAYLOAD {
         return None;
     }

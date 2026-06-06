@@ -19,8 +19,7 @@ pub fn socket_path() -> PathBuf {
 pub fn run() -> Result<()> {
     let path = socket_path();
     let _ = std::fs::remove_file(&path); // clear stale socket
-    let listener = UnixListener::bind(&path)
-        .with_context(|| format!("bind {}", path.display()))?;
+    let listener = UnixListener::bind(&path).with_context(|| format!("bind {}", path.display()))?;
     eprintln!("flip-daemon listening on {}", path.display());
 
     let port = pick_agent_port().context("find Flipper agent port")?;
@@ -49,8 +48,9 @@ fn relay_one(client: &mut UnixStream, device: &mut SerialTransport) -> Result<()
         match client.read(&mut from_client) {
             Ok(0) => return Ok(()), // client closed
             Ok(n) => device.write_all(&from_client[..n])?,
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
-                || e.kind() == std::io::ErrorKind::TimedOut => {}
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut => {}
             Err(e) => return Err(e.into()),
         }
 

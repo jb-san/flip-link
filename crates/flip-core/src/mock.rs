@@ -12,7 +12,10 @@ pub struct PongLoopback {
 
 impl PongLoopback {
     pub fn new() -> Self {
-        PongLoopback { out: VecDeque::new(), reader: FrameReader::new() }
+        PongLoopback {
+            out: VecDeque::new(),
+            reader: FrameReader::new(),
+        }
     }
 }
 
@@ -28,8 +31,8 @@ impl Transport for PongLoopback {
         while let Some(f) = self.reader.next_frame() {
             if f.typ == MsgType::Ping {
                 let mut enc = [0u8; 1100];
-                let n = encode(MsgType::Pong, 0, f.seq, &f.payload, &mut enc)
-                    .expect("pong encodes");
+                let n =
+                    encode(MsgType::Pong, 0, f.seq, &f.payload, &mut enc).expect("pong encodes");
                 self.out.extend(&enc[..n]);
             }
         }

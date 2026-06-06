@@ -12,7 +12,11 @@ pub struct DeviceLink<T: Transport> {
 
 impl<T: Transport> DeviceLink<T> {
     pub fn new(transport: T) -> Self {
-        DeviceLink { transport, reader: FrameReader::new(), next_seq: 1 }
+        DeviceLink {
+            transport,
+            reader: FrameReader::new(),
+            next_seq: 1,
+        }
     }
 
     fn alloc_seq(&mut self) -> u16 {

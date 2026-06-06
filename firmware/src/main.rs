@@ -4,15 +4,11 @@
 extern crate flipperzero_rt;
 
 use core::ffi::CStr;
+use flip_proto::{DecodeResult, MsgType, decode, encode};
 use flipperzero_rt::{entry, manifest};
 use flipperzero_sys as sys;
-use flip_proto::{decode, encode, DecodeResult, MsgType};
 
-manifest!(
-    name = "flip-link",
-    app_version = 1,
-    has_icon = false,
-);
+manifest!(name = "flip-link", app_version = 1, has_icon = false,);
 
 entry!(main);
 
