@@ -26,12 +26,14 @@ entry!(main);
 
 /// Interface 1 = our binary channel; interface 0 stays the CLI/RPC.
 const AGENT_IF: u8 = 1;
-const ACC_CAP: usize = 1024;
 const RX_STREAM_CAP: usize = 1024;
 const CHUNK: usize = 64;
 const ENC_CAP: usize = 1100;
 /// ~5 min of idle 20ms receive timeouts, then restore USB and exit.
 const MAX_IDLE: u32 = 15_000;
+/// Largest accepted inbound frame (header+payload+crc). Guards the heap
+/// accumulator: anything bigger is treated as garbage and dropped.
+const MAX_FRAME: usize = 16 * 1024;
 
 /// RX stream buffer handle, shared from the USB ISR callback to the main loop.
 static RX_STREAM: AtomicPtr<sys::FuriStreamBuffer> = AtomicPtr::new(core::ptr::null_mut());
@@ -180,8 +182,7 @@ fn main(_args: Option<&CStr>) -> i32 {
         return -1;
     }
 
-    let mut acc = [0u8; ACC_CAP];
-    let mut acc_len: usize = 0;
+    let mut acc: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
     let mut chunk = [0u8; CHUNK];
     let mut enc = [0u8; ENC_CAP];
     let recv_timeout = unsafe { sys::furi_ms_to_ticks(20) };
@@ -202,17 +203,19 @@ fn main(_args: Option<&CStr>) -> i32 {
         }
         idle = 0;
 
-        // Append to the accumulator (drop overflow defensively).
-        let space = ACC_CAP - acc_len;
-        let n = core::cmp::min(space, got);
-        acc[acc_len..acc_len + n].copy_from_slice(&chunk[..n]);
-        acc_len += n;
+        // Append to the heap accumulator; drop everything if it grows past a
+        // sane max (garbage/oversized frame) so the resync loop can't wedge.
+        acc.extend_from_slice(&chunk[..got]);
+        if acc.len() > MAX_FRAME {
+            acc.clear();
+            continue;
+        }
 
         // Drain whole frames, echoing PONG for each PING.
         loop {
             let used;
             let mut send_len = 0usize;
-            match decode(&acc[..acc_len]) {
+            match decode(&acc) {
                 DecodeResult::Frame(f, consumed) => {
                     match f.typ {
                         MsgType::Ping => {
@@ -226,19 +229,17 @@ fn main(_args: Option<&CStr>) -> i32 {
                 }
                 DecodeResult::NeedMore => break,
                 DecodeResult::Resync => {
-                    if acc_len == 0 {
+                    if acc.is_empty() {
                         break;
                     }
-                    acc.copy_within(1..acc_len, 0);
-                    acc_len -= 1;
+                    acc.drain(0..1);
                     continue;
                 }
             }
             if send_len > 0 {
                 cdc_send_all(&enc[..send_len]);
             }
-            acc.copy_within(used..acc_len, 0);
-            acc_len -= used;
+            acc.drain(0..used);
         }
     }
 
