@@ -5,6 +5,9 @@ extern crate flipperzero_rt;
 extern crate alloc;
 extern crate flipperzero_alloc;
 
+mod registry;
+mod sys_instrument;
+
 use core::ffi::{c_void, CStr};
 use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
