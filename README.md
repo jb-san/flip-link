@@ -68,16 +68,21 @@ Flipper re-enumerates (reboot / relaunch), retrying a few times then idling unti
 command. It runs quietly — its logs go to a file, not your terminal. Use `flip daemon
 status` (or `just daemon-status`) to check it, and `just daemon-log` to tail its log.
 
-## IR transmit (Slice 1b)
+## IR capture & transmit
+
+Capture a remote, then replay it — the round-trip:
 
 ```sh
-flip caps                                              # `ir` now lists `ir.transmit`
-flip ir transmit --file crates/flip-cli/examples/sos.txt
-flip ir transmit --file remote.txt --freq 38000 --duty 330
+flip caps                                            # `ir` lists `ir.transmit` + `ir.capture`
+flip ir capture --auto-end 400 --output remote.txt   # press a remote button at the Flipper
+flip ir transmit --file remote.txt                   # replay at the target device
 ```
 
-The timings file is whitespace/newline-separated microsecond durations (mark, space,
-mark, …); `#` lines are comments. IR capture (which produces these files) is Slice 1c.
+`ir capture` streams raw timings until **Ctrl-C**, or `--auto-end <ms>` of silence (good for
+one button press). The output is the whitespace/newline µs format `ir transmit --file`
+consumes — so capture→transmit round-trips. `--output` writes a file (default: stdout);
+`ir transmit` also takes `--freq`/`--duty` (defaults 38000 Hz / 330 permille). `#` lines in
+a timings file are comments.
 
 ## Development
 
