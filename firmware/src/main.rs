@@ -3,103 +3,170 @@
 
 extern crate flipperzero_rt;
 
-use core::ffi::CStr;
-use flip_proto::{DecodeResult, MsgType, decode, encode};
+use core::ffi::{c_void, CStr};
+use core::sync::atomic::{AtomicPtr, Ordering};
+
+use flip_proto::{decode, encode, DecodeResult, MsgType};
 use flipperzero_rt::{entry, manifest};
 use flipperzero_sys as sys;
 
-manifest!(name = "flip-link", app_version = 1, has_icon = false,);
+manifest!(
+    name = "flip-link",
+    app_version = 1,
+    has_icon = false,
+    stack_size = 4096,
+);
 
 entry!(main);
 
 /// Interface 1 = our binary channel; interface 0 stays the CLI/RPC.
 const AGENT_IF: u8 = 1;
 const ACC_CAP: usize = 1024;
-const RX_CAP: usize = 256;
+const RX_STREAM_CAP: usize = 1024;
+const CHUNK: usize = 64;
 const ENC_CAP: usize = 1100;
-/// Time-box the spike: idle ticks * 2ms ≈ 5 minutes, then restore USB and exit.
-const MAX_IDLE_TICKS: u32 = 150_000;
+/// ~5 min of idle 20ms receive timeouts, then restore USB and exit.
+const MAX_IDLE: u32 = 15_000;
 
-/// Send all bytes on the agent CDC interface in 64-byte (endpoint-sized) chunks.
+/// RX stream buffer handle, shared from the USB ISR callback to the main loop.
+static RX_STREAM: AtomicPtr<sys::FuriStreamBuffer> = AtomicPtr::new(core::ptr::null_mut());
+
+/// USB ISR: drain the agent CDC endpoint into the RX stream buffer. Must be
+/// quick and ISR-safe — it only reads the endpoint and hands bytes to the buffer
+/// (the main loop does the framing/echo). This mirrors the proven C prototype.
+unsafe extern "C" fn rx_callback(_ctx: *mut c_void) {
+    let sb = RX_STREAM.load(Ordering::Acquire);
+    if sb.is_null() {
+        return;
+    }
+    let mut buf = [0u8; CHUNK];
+    let n = unsafe { sys::furi_hal_cdc_receive(AGENT_IF, buf.as_mut_ptr(), CHUNK as u16) };
+    if n > 0 {
+        unsafe { sys::furi_stream_buffer_send(sb, buf.as_ptr() as *const c_void, n as usize, 0) };
+    }
+}
+
+/// USB ISR: TX endpoint complete. Small frames need no flow control; no-op.
+unsafe extern "C" fn tx_callback(_ctx: *mut c_void) {}
+
+/// CDC callbacks registered for interface 1 BEFORE switching to dual-CDC, so the
+/// USB ISR always has valid pointers to call on enumeration/data. Leaving these
+/// unset makes the ISR jump to stale/null pointers -> HardFault (device freeze).
+/// state/ctrl_line/config are None — the firmware null-checks them (as the C
+/// prototype relies on).
+static CDC_CALLBACKS: sys::CdcCallbacks = sys::CdcCallbacks {
+    tx_ep_callback: Some(tx_callback),
+    rx_ep_callback: Some(rx_callback),
+    state_callback: None,
+    ctrl_line_callback: None,
+    config_callback: None,
+};
+
+/// Send all bytes on the agent CDC interface in endpoint-sized chunks.
 fn cdc_send_all(bytes: &[u8]) {
     let mut off = 0;
     while off < bytes.len() {
-        let end = core::cmp::min(off + 64, bytes.len());
+        let end = core::cmp::min(off + CHUNK, bytes.len());
         let chunk = &bytes[off..end];
-        unsafe {
-            sys::furi_hal_cdc_send(AGENT_IF, chunk.as_ptr() as *mut u8, chunk.len() as u16);
-        }
+        unsafe { sys::furi_hal_cdc_send(AGENT_IF, chunk.as_ptr() as *mut u8, chunk.len() as u16) };
         off = end;
     }
 }
 
 fn main(_args: Option<&CStr>) -> i32 {
-    // Save current USB config, switch to dual-CDC (exposes interface 1 = ours).
+    // Allocate the ISR->main RX stream buffer and publish its handle first, so a
+    // callback firing during the config switch always sees a valid buffer.
+    let rx_stream = unsafe { sys::furi_stream_buffer_alloc(RX_STREAM_CAP, 1) };
+    RX_STREAM.store(rx_stream, Ordering::Release);
+
+    // Register CDC callbacks for interface 1 BEFORE switching config, then unlock
+    // and switch to dual-CDC. Verify the switch; if it failed, tear down cleanly.
     let prev = unsafe { sys::furi_hal_usb_get_config() };
-    unsafe {
-        sys::furi_hal_usb_set_config(&raw mut sys::usb_cdc_dual, core::ptr::null_mut());
+    let switched = unsafe {
+        sys::furi_hal_cdc_set_callbacks(
+            AGENT_IF,
+            &raw const CDC_CALLBACKS as *mut sys::CdcCallbacks,
+            core::ptr::null_mut(),
+        );
+        sys::furi_hal_usb_unlock();
+        sys::furi_hal_usb_set_config(&raw mut sys::usb_cdc_dual, core::ptr::null_mut())
+    };
+    if !switched {
+        teardown(prev, rx_stream);
+        return -1;
     }
 
     let mut acc = [0u8; ACC_CAP];
     let mut acc_len: usize = 0;
-    let mut rx = [0u8; RX_CAP];
-    let mut idle_ticks: u32 = 0;
+    let mut chunk = [0u8; CHUNK];
+    let mut enc = [0u8; ENC_CAP];
+    let recv_timeout = unsafe { sys::furi_ms_to_ticks(20) };
+    let mut idle: u32 = 0;
 
-    loop {
-        let got = unsafe { sys::furi_hal_cdc_receive(AGENT_IF, rx.as_mut_ptr(), RX_CAP as u16) };
-        if got > 0 {
-            idle_ticks = 0;
-            let got = got as usize;
-            // Append to the accumulator (drop overflow defensively).
-            let space = ACC_CAP - acc_len;
-            let n = core::cmp::min(space, got);
-            acc[acc_len..acc_len + n].copy_from_slice(&rx[..n]);
-            acc_len += n;
+    while idle < MAX_IDLE {
+        let got = unsafe {
+            sys::furi_stream_buffer_receive(
+                rx_stream,
+                chunk.as_mut_ptr() as *mut c_void,
+                CHUNK,
+                recv_timeout,
+            )
+        };
+        if got == 0 {
+            idle += 1;
+            continue;
+        }
+        idle = 0;
 
-            // Drain whole frames, echoing PONG for each PING.
-            loop {
-                let (used, send_len, enc);
-                match decode(&acc[..acc_len]) {
-                    DecodeResult::Frame(f, consumed) => {
-                        let mut buf = [0u8; ENC_CAP];
-                        let mut sl = 0usize;
-                        if f.typ == MsgType::Ping {
-                            if let Some(en) = encode(MsgType::Pong, 0, f.seq, f.payload, &mut buf) {
-                                sl = en;
-                            }
+        // Append to the accumulator (drop overflow defensively).
+        let space = ACC_CAP - acc_len;
+        let n = core::cmp::min(space, got);
+        acc[acc_len..acc_len + n].copy_from_slice(&chunk[..n]);
+        acc_len += n;
+
+        // Drain whole frames, echoing PONG for each PING.
+        loop {
+            let used;
+            let mut send_len = 0usize;
+            match decode(&acc[..acc_len]) {
+                DecodeResult::Frame(f, consumed) => {
+                    if f.typ == MsgType::Ping {
+                        if let Some(en) = encode(MsgType::Pong, 0, f.seq, f.payload, &mut enc) {
+                            send_len = en;
                         }
-                        used = consumed;
-                        send_len = sl;
-                        enc = buf;
                     }
-                    DecodeResult::NeedMore => break,
-                    DecodeResult::Resync => {
-                        if acc_len == 0 {
-                            break;
-                        }
-                        acc.copy_within(1..acc_len, 0);
-                        acc_len -= 1;
-                        continue;
+                    used = consumed;
+                }
+                DecodeResult::NeedMore => break,
+                DecodeResult::Resync => {
+                    if acc_len == 0 {
+                        break;
                     }
+                    acc.copy_within(1..acc_len, 0);
+                    acc_len -= 1;
+                    continue;
                 }
-                if send_len > 0 {
-                    cdc_send_all(&enc[..send_len]);
-                }
-                acc.copy_within(used..acc_len, 0);
-                acc_len -= used;
             }
-        } else {
-            unsafe { sys::furi_delay_ms(2) };
-            idle_ticks += 1;
-            if idle_ticks >= MAX_IDLE_TICKS {
-                break;
+            if send_len > 0 {
+                cdc_send_all(&enc[..send_len]);
             }
+            acc.copy_within(used..acc_len, 0);
+            acc_len -= used;
         }
     }
 
-    // Restore the previous USB config on exit.
+    teardown(prev, rx_stream);
+    0
+}
+
+/// Clear CDC callbacks, restore the previous USB config, and free the RX buffer.
+/// Callbacks are cleared first so no ISR can touch the buffer after it is freed.
+fn teardown(prev: *mut sys::FuriHalUsbInterface, rx_stream: *mut sys::FuriStreamBuffer) {
     unsafe {
+        sys::furi_hal_cdc_set_callbacks(AGENT_IF, core::ptr::null_mut(), core::ptr::null_mut());
+        sys::furi_hal_usb_unlock();
         sys::furi_hal_usb_set_config(prev, core::ptr::null_mut());
     }
-    0
+    RX_STREAM.store(core::ptr::null_mut(), Ordering::Release);
+    unsafe { sys::furi_stream_buffer_free(rx_stream) };
 }
