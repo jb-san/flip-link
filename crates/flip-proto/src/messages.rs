@@ -65,6 +65,23 @@ pub struct AgentError {
     pub message: String,
 }
 
+/// STREAM_START body (device→client): declares the stream's sample format.
+#[derive(Clone, Debug, PartialEq, minicbor::Encode, minicbor::Decode)]
+pub struct StreamStart {
+    #[n(0)]
+    pub format: String,
+}
+
+/// STREAM_STOP body (device→client final frame): how many samples were dropped.
+#[derive(Clone, Debug, PartialEq, minicbor::Encode, minicbor::Decode)]
+pub struct StreamStop {
+    #[n(0)]
+    pub dropped: u32,
+}
+
+/// The raw-sample format IR capture uses: little-endian i32 microsecond durations.
+pub const STREAM_FORMAT_RAW_I32_US: &str = "raw_int32_le_us";
+
 /// Encode any control body to a `Vec<u8>` (the frame payload).
 pub fn to_payload<T: minicbor::Encode<()>>(msg: &T) -> Vec<u8> {
     let mut buf = Vec::new();
@@ -97,6 +114,16 @@ mod tests {
         let payload = to_payload(&req);
         let back: Req = from_payload(&payload).unwrap();
         assert_eq!(back, req);
+    }
+
+    #[test]
+    fn stream_bodies_round_trip() {
+        let s = StreamStart {
+            format: STREAM_FORMAT_RAW_I32_US.to_string(),
+        };
+        assert_eq!(from_payload::<StreamStart>(&to_payload(&s)).unwrap(), s);
+        let p = StreamStop { dropped: 3 };
+        assert_eq!(from_payload::<StreamStop>(&to_payload(&p)).unwrap(), p);
     }
 
     #[test]

@@ -24,4 +24,4 @@ pub use frame::{
 pub use value::Value;
 
 #[cfg(feature = "alloc")]
-pub use messages::{AgentError, Caps, Hello, Instrument, Req, Resp};
+pub use messages::{AgentError, Caps, Hello, Instrument, Req, Resp, StreamStart, StreamStop};
