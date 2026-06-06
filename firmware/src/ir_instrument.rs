@@ -84,6 +84,9 @@ pub fn transmit(params: &Value) -> Result<Value, (u32, String)> {
     TX_LEN.store(timings.len(), Ordering::Release);
     TX_POS.store(0, Ordering::Release);
 
+    // Publish order matters: the atomics + the owning Vec are set BEFORE the
+    // callback is registered and tx_start kicks off DMA, so the ISR (which only
+    // fires once DMA runs) can never observe a half-published state.
     let duty = duty_permille as f32 / 1000.0;
     unsafe {
         sys::furi_hal_infrared_async_tx_set_data_isr_callback(
@@ -91,8 +94,10 @@ pub fn transmit(params: &Value) -> Result<Value, (u32, String)> {
             core::ptr::null_mut(),
         );
         sys::furi_hal_infrared_async_tx_start(freq, duty);
+        // wait_termination blocks until the signal finishes AND frees resources;
+        // it is the *alternative* to _stop (calling both double-frees HAL state),
+        // matching the proven C prototype which uses wait_termination alone.
         sys::furi_hal_infrared_async_tx_wait_termination();
-        sys::furi_hal_infrared_async_tx_stop();
     }
     TX_PTR.store(core::ptr::null_mut(), Ordering::Release);
 
