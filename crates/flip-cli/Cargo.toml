@@ -9,7 +9,7 @@ name = "flip"
 path = "src/main.rs"
 
 [dependencies]
-flip-core = { path = "../flip-core" }
+flip-client = { path = "../flip-client" }
 flip-proto = { path = "../flip-proto", features = ["alloc"] }
 anyhow = { workspace = true }
 clap = { workspace = true }

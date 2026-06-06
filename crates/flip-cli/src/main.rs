@@ -1,10 +1,12 @@
-mod capture;
-mod client;
-mod ir;
 mod kv;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use flip_client::{DaemonStatus, DeviceStatus, IrSignal};
+use flip_proto::Value;
+use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 #[derive(Parser)]
@@ -52,12 +54,12 @@ enum IrCmd {
         /// Path to a file of whitespace/newline-separated µs timings.
         #[arg(long)]
         file: String,
-        /// Carrier frequency in Hz.
-        #[arg(long, default_value_t = 38000)]
-        freq: u64,
-        /// Duty cycle in permille (e.g. 330 = 33%).
-        #[arg(long, default_value_t = 330)]
-        duty: u64,
+        /// Override carrier frequency in Hz from the signal file.
+        #[arg(long)]
+        freq: Option<u32>,
+        /// Override duty cycle in permille from the signal file.
+        #[arg(long)]
+        duty: Option<u32>,
     },
     /// Capture IR timings to a file (or stdout). Stops on Ctrl-C, or after a
     /// silence gap with --auto-end.
@@ -75,23 +77,21 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Status => {
-            match client::ping_through_daemon(b"flip-status", Duration::from_secs(3)) {
+            match flip_client::ping_through_daemon(b"flip-status", Duration::from_secs(3)) {
                 Ok(echo) => {
                     println!("daemon: up");
                     println!("device: reachable (PONG round-trip ok)");
                     println!("echo:   {:?}", String::from_utf8_lossy(&echo));
                 }
                 Err(e) => {
-                    // Don't claim the daemon is up — the failure may be that it
-                    // never came up. Report the underlying reason honestly.
-                    println!("status: FAILED — {e:#}");
+                    println!("status: FAILED - {e:#}");
                     std::process::exit(1);
                 }
             }
             Ok(())
         }
         Cmd::Caps => {
-            let caps = client::caps(Duration::from_secs(3))?;
+            let caps = flip_client::caps(Duration::from_secs(3))?;
             println!("protocol v{}", caps.protocol_version);
             for inst in &caps.instruments {
                 println!("{}", inst.id);
@@ -107,29 +107,103 @@ fn main() -> Result<()> {
             params,
         } => {
             let params = kv::parse_params(&params)?;
-            let resp = client::invoke(&instrument, &opcode, params, Duration::from_secs(3))?;
-            println!("{}", client::render_value(&resp.result));
+            let resp = flip_client::invoke(&instrument, &opcode, params, Duration::from_secs(3))?;
+            println!("{}", render_value(&resp.result));
             Ok(())
         }
         Cmd::Daemon { cmd } => match cmd {
             DaemonCmd::Status => {
-                client::daemon_status();
+                print_daemon_status(flip_client::status());
                 Ok(())
             }
         },
         Cmd::Ir { cmd } => match cmd {
             IrCmd::Transmit { file, freq, duty } => {
-                let timings = ir::load_timings_file(&file)?;
-                let count = timings.len();
-                let params = ir::transmit_params(timings, freq, duty);
-                let resp = client::invoke("ir", "transmit", params, Duration::from_secs(10))?;
-                println!(
-                    "transmitted {count} edges: {}",
-                    client::render_value(&resp.result)
-                );
+                let mut signal = IrSignal::read_file(&file)?;
+                if let Some(freq) = freq {
+                    signal.frequency = freq;
+                }
+                if let Some(duty) = duty {
+                    signal.duty_permille = duty;
+                }
+                let count = signal.timings.len();
+                let sent = flip_client::ir_transmit(&signal, Duration::from_secs(10))?;
+                println!("transmitted {count} edges: {sent}");
                 Ok(())
             }
-            IrCmd::Capture { output, auto_end } => capture::run(auto_end, output.as_deref()),
+            IrCmd::Capture { output, auto_end } => run_capture(auto_end, output.as_deref()),
         },
+    }
+}
+
+fn print_daemon_status(status: DaemonStatus) {
+    if !status.daemon_running {
+        println!("daemon: not running");
+        println!("log:    {}", status.log_path.display());
+        return;
+    }
+
+    println!("daemon: running");
+    match status.device {
+        DeviceStatus::Connected { instruments } => {
+            println!("device: connected ({instruments} instruments)");
+        }
+        DeviceStatus::Disconnected => println!("device: disconnected"),
+        DeviceStatus::Unknown(reason) => println!("device: unknown ({reason})"),
+    }
+    println!("log:    {}", status.log_path.display());
+}
+
+fn run_capture(auto_end_ms: Option<u64>, output: Option<&str>) -> Result<()> {
+    let stop = Arc::new(AtomicBool::new(false));
+    {
+        let stop = stop.clone();
+        let _ = ctrlc::set_handler(move || stop.store(true, Ordering::SeqCst));
+    }
+
+    eprintln!("capturing... (Ctrl-C to stop)");
+    let auto_end = auto_end_ms.map(Duration::from_millis);
+    let signal = flip_client::ir_capture(auto_end, &|| stop.load(Ordering::SeqCst))?;
+
+    match output {
+        Some(path) => {
+            signal.write_file(path)?;
+            eprintln!("captured {} timings -> {path}", signal.timings.len());
+        }
+        None => std::io::stdout().write_all(signal.to_file_string().as_bytes())?,
+    }
+    Ok(())
+}
+
+fn render_value(value: &Value) -> String {
+    match value {
+        Value::Null => "null".to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::U64(n) => n.to_string(),
+        Value::I64(n) => n.to_string(),
+        Value::Text(s) => s.clone(),
+        Value::Bytes(bytes) => format!(
+            "0x{}",
+            bytes
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        ),
+        Value::Array(items) => {
+            let inner = items
+                .iter()
+                .map(render_value)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("[{inner}]")
+        }
+        Value::Map(fields) => {
+            let inner = fields
+                .iter()
+                .map(|(key, value)| format!("{key}: {}", render_value(value)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{{{inner}}}")
+        }
     }
 }

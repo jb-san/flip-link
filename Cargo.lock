@@ -183,7 +183,7 @@ dependencies = [
  "anyhow",
  "clap",
  "ctrlc",
- "flip-core",
+ "flip-client",
  "flip-proto",
 ]
 
