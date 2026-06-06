@@ -119,31 +119,71 @@ fn send_msg<T: minicbor::Encode<()>>(typ: MsgType, seq: u16, body: &T) {
     }
 }
 
-/// Handle one decoded control frame (HELLO/REQ); PING is handled inline in the
-/// drain loop. Unknown/other types are ignored.
+/// Send a STREAM_START frame with a `{format}` body.
+fn send_stream_start(seq: u16, format: &str) {
+    send_msg(
+        MsgType::StreamStart,
+        seq,
+        &flip_proto::StreamStart {
+            format: alloc::string::String::from(format),
+        },
+    );
+}
+
+/// Send a STREAM_DATA frame with a raw payload (no CBOR).
+fn send_stream_data(seq: u16, raw: &[u8]) {
+    let mut frame = alloc::vec![0u8; flip_proto::HEADER_SIZE + raw.len() + 2];
+    if let Some(n) = encode(MsgType::StreamData, 0, seq, raw, &mut frame) {
+        cdc_send_all(&frame[..n]);
+    }
+}
+
+/// Send the final STREAM_STOP frame with a `{dropped}` body.
+fn send_stream_stop(seq: u16, dropped: u32) {
+    send_msg(MsgType::StreamStop, seq, &flip_proto::StreamStop { dropped });
+}
+
+/// Send an ERROR frame with a `{code,message}` body.
+fn send_error(seq: u16, code: u32, message: &str) {
+    send_msg(
+        MsgType::Error,
+        seq,
+        &flip_proto::AgentError {
+            code,
+            message: alloc::string::String::from(message),
+        },
+    );
+}
+
+/// Handle one decoded control frame (HELLO/REQ/STREAM_STOP); PING is handled
+/// inline in the drain loop. Unknown/other types are ignored.
 fn handle_frame(typ: MsgType, seq: u16, payload: &[u8]) {
-    use flip_proto::messages::{AgentError, Req, Resp, from_payload};
+    use flip_proto::messages::{Req, Resp, from_payload};
     match typ {
         MsgType::Hello => {
             let caps = registry::build_caps();
             send_msg(MsgType::Caps, seq, &caps);
         }
         MsgType::Req => match from_payload::<Req>(payload) {
-            Ok(req) => match registry::dispatch(&req.instrument, &req.opcode, &req.params) {
-                Ok(result) => send_msg(MsgType::Resp, seq, &Resp { ok: true, result }),
-                Err((code, message)) => {
-                    send_msg(MsgType::Error, seq, &AgentError { code, message })
+            Ok(req) => {
+                // ir.capture is a streaming op — it starts a STREAM, not a RESP.
+                if req.instrument == "ir" && req.opcode == "capture" {
+                    ir_instrument::start_capture(seq, send_stream_start, |s: u16, c: u32, m: &str| {
+                        send_error(s, c, m)
+                    });
+                } else {
+                    match registry::dispatch(&req.instrument, &req.opcode, &req.params) {
+                        Ok(result) => send_msg(MsgType::Resp, seq, &Resp { ok: true, result }),
+                        Err((code, message)) => send_error(seq, code, &message),
+                    }
                 }
-            },
-            Err(_) => send_msg(
-                MsgType::Error,
-                seq,
-                &AgentError {
-                    code: flip_proto::messages::ERR_BAD_PARAMS,
-                    message: alloc::string::String::from("bad REQ body"),
-                },
-            ),
+            }
+            Err(_) => send_error(seq, flip_proto::messages::ERR_BAD_PARAMS, "bad REQ body"),
         },
+        // Client asks to end the active capture.
+        MsgType::StreamStop => {
+            ir_instrument::stop_capture(send_stream_data, send_stream_stop);
+        }
         _ => {}
     }
 }
@@ -242,7 +282,15 @@ fn main(_args: Option<&CStr>) -> i32 {
             }
             acc.drain(0..used);
         }
+
+        // Stream captured IR samples out while a capture is active.
+        if ir_instrument::capture_active() {
+            ir_instrument::drain_capture(send_stream_data);
+        }
     }
+
+    // If the user pressed Back mid-capture, finish the stream cleanly.
+    ir_instrument::stop_capture(send_stream_data, send_stream_stop);
 
     usb_teardown(prev, rx_stream);
     gui_teardown(gui, view_port);
