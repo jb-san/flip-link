@@ -11,13 +11,18 @@ See [`docs/superpowers/specs/`](docs/superpowers/specs/) for the architecture an
 - `firmware/`         — the on-device FAP (flipperzero-rs; a standalone package excluded
   from the host workspace because it builds for the `thumbv7em-none-eabihf` target)
 
-## Status: Slice 0 — dual-CDC walking skeleton
+## Status: Slice 0 — dual-CDC walking skeleton ✅ (verified on hardware)
 
-The host stack and firmware are implemented and build; the on-device PING/PONG
-round-trip is the remaining hardware acceptance step.
+`flip status` round-trips PONG host → daemon → device → firmware on a Flipper Zero
+(fw 1.4.3 / API 87.1). The FAP switches USB to dual-CDC, shows a status screen, and
+exits on Back.
 
 - Host: `cargo build` (produces `flip` + `flip-daemon`), `cargo test` (11 tests).
 - Firmware: builds to `firmware/target/thumbv7em-none-eabihf/release/flip_link.fap`.
+
+> Known limitation (Slice 1): the daemon opens the serial port once with no reconnect.
+> After any Flipper reboot/relaunch the FAP re-enumerates onto a new port, so restart the
+> daemon (`just daemon-stop`, or use `just reflash` / `just bench`).
 
 ## Tasks
 
