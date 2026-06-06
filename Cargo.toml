@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = ["crates/flip-proto", "crates/flip-core", "crates/flip-daemon", "crates/flip-cli"]
+exclude = ["firmware"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serialport = "4"
