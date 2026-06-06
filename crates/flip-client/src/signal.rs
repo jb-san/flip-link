@@ -112,6 +112,16 @@ fn parse_directive_u32(name: &str, rest: &str) -> Result<u32> {
         .map_err(|_| anyhow::anyhow!("invalid {name} value '{token}'"))
 }
 
+pub fn decode_stream_data(payload: &[u8], out: &mut Vec<u64>) -> usize {
+    let mut count = 0;
+    for chunk in payload.chunks_exact(4) {
+        let value = i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        out.push(value.max(0) as u64);
+        count += 1;
+    }
+    count
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -186,6 +196,15 @@ mod tests {
         assert_eq!(signal.frequency, DEFAULT_FREQUENCY);
         assert_eq!(signal.duty_permille, DEFAULT_DUTY_PERMILLE);
         assert!(signal.timings.is_empty());
+    }
+
+    #[test]
+    fn decodes_le_i32_stream_samples() {
+        let mut out = Vec::new();
+        let payload = [0x10, 0x27, 0, 0, 0x2c, 0x01, 0, 0];
+
+        assert_eq!(decode_stream_data(&payload, &mut out), 2);
+        assert_eq!(out, vec![10_000, 300]);
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use crate::{DaemonStatus, DeviceStatus};
 use anyhow::{anyhow, Context, Result};
 use flip_core::transport::{FrameReader, Transport};
 use flip_proto::{encode, MsgType};
@@ -103,64 +104,92 @@ fn spawn_daemon() -> Result<()> {
     Ok(())
 }
 
-/// Report daemon + device status WITHOUT spawning a daemon. Prints one block.
-#[allow(dead_code)]
-pub fn daemon_status() {
+pub fn status() -> DaemonStatus {
+    let log_path = log_path();
     let stream = match try_connect() {
         Some(s) => s,
         None => {
-            println!("daemon: not running");
-            println!("log:    {}", log_path().display());
-            return;
+            return DaemonStatus {
+                daemon_running: false,
+                device: DeviceStatus::Unknown("daemon not running".to_string()),
+                log_path,
+            };
         }
     };
-    println!("daemon: running");
-    // Ask for CAPS (HELLO). Connected device -> CAPS; otherwise the daemon
-    // replies ERROR "device not connected".
+
     if stream
         .set_read_timeout(Some(Duration::from_millis(50)))
         .is_err()
     {
-        println!("device: unknown (socket error)");
-        return;
+        return DaemonStatus {
+            daemon_running: true,
+            device: DeviceStatus::Unknown("socket error".to_string()),
+            log_path,
+        };
     }
-    let mut t = StreamTransport(stream);
+
+    let mut transport = StreamTransport(stream);
     let mut reader = FrameReader::new();
     let hello = flip_proto::messages::to_payload(&flip_proto::Hello { host_version: 0 });
     let mut buf = vec![0u8; flip_proto::HEADER_SIZE + hello.len() + 2];
-    let n = encode(MsgType::Hello, 0, 1, &hello, &mut buf).unwrap();
-    if t.write_all(&buf[..n]).is_err() {
-        println!("device: unknown (write error)");
-        return;
+    let n = match encode(MsgType::Hello, 0, 1, &hello, &mut buf) {
+        Some(n) => n,
+        None => {
+            return DaemonStatus {
+                daemon_running: true,
+                device: DeviceStatus::Unknown("HELLO payload too big".to_string()),
+                log_path,
+            };
+        }
+    };
+    if transport.write_all(&buf[..n]).is_err() {
+        return DaemonStatus {
+            daemon_running: true,
+            device: DeviceStatus::Unknown("write error".to_string()),
+            log_path,
+        };
     }
+
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut scratch = [0u8; 1024];
     loop {
-        if let Some(f) = reader.next_frame() {
-            match f.typ {
+        if let Some(frame) = reader.next_frame() {
+            let device = match frame.typ {
                 MsgType::Caps => {
-                    match flip_proto::messages::from_payload::<flip_proto::Caps>(&f.payload) {
-                        Ok(caps) => {
-                            println!("device: connected ({} instruments)", caps.instruments.len())
-                        }
-                        Err(_) => println!("device: connected (CAPS undecodable)"),
+                    match flip_proto::messages::from_payload::<flip_proto::Caps>(&frame.payload) {
+                        Ok(caps) => DeviceStatus::Connected {
+                            instruments: caps.instruments.len(),
+                        },
+                        Err(_) => DeviceStatus::Unknown("CAPS undecodable".to_string()),
                     }
                 }
-                _ => println!("device: disconnected"),
-            }
-            println!("log:    {}", log_path().display());
-            return;
+                MsgType::Error => DeviceStatus::Disconnected,
+                _ => DeviceStatus::Disconnected,
+            };
+            return DaemonStatus {
+                daemon_running: true,
+                device,
+                log_path,
+            };
         }
+
         if Instant::now() >= deadline {
-            println!("device: unknown (no reply)");
-            return;
+            return DaemonStatus {
+                daemon_running: true,
+                device: DeviceStatus::Unknown("no reply".to_string()),
+                log_path,
+            };
         }
-        match t.read(&mut scratch) {
+
+        match transport.read(&mut scratch) {
             Ok(got) if got > 0 => reader.feed(&scratch[..got]),
             Ok(_) => std::thread::sleep(Duration::from_millis(5)),
             Err(_) => {
-                println!("device: unknown (read error)");
-                return;
+                return DaemonStatus {
+                    daemon_running: true,
+                    device: DeviceStatus::Unknown("read error".to_string()),
+                    log_path,
+                };
             }
         }
     }
