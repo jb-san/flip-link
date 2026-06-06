@@ -4,7 +4,7 @@
 extern crate flipperzero_rt;
 
 use core::ffi::{c_void, CStr};
-use core::sync::atomic::{AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
 use flip_proto::{decode, encode, DecodeResult, MsgType};
 use flipperzero_rt::{entry, manifest};
@@ -30,6 +30,8 @@ const MAX_IDLE: u32 = 15_000;
 
 /// RX stream buffer handle, shared from the USB ISR callback to the main loop.
 static RX_STREAM: AtomicPtr<sys::FuriStreamBuffer> = AtomicPtr::new(core::ptr::null_mut());
+/// Cleared by the GUI input callback (Back press) to end the main loop.
+static RUNNING: AtomicBool = AtomicBool::new(true);
 
 /// USB ISR: drain the agent CDC endpoint into the RX stream buffer. Must be
 /// quick and ISR-safe — it only reads the endpoint and hands bytes to the buffer
@@ -62,6 +64,30 @@ static CDC_CALLBACKS: sys::CdcCallbacks = sys::CdcCallbacks {
     config_callback: None,
 };
 
+/// GUI draw callback: a simple status screen so the app is visibly alive.
+unsafe extern "C" fn draw_callback(canvas: *mut sys::Canvas, _ctx: *mut c_void) {
+    unsafe {
+        sys::canvas_clear(canvas);
+        sys::canvas_set_font(canvas, sys::FontPrimary);
+        sys::canvas_draw_str(canvas, 2, 14, c"flip-link".as_ptr());
+        sys::canvas_set_font(canvas, sys::FontSecondary);
+        sys::canvas_draw_str(canvas, 2, 30, c"USB agent running".as_ptr());
+        sys::canvas_draw_str(canvas, 2, 42, c"interface 1 ready".as_ptr());
+        sys::canvas_draw_str(canvas, 2, 60, c"Press Back to exit".as_ptr());
+    }
+}
+
+/// GUI input callback (runs on the GUI thread): exit on a short Back press.
+unsafe extern "C" fn input_callback(event: *mut sys::InputEvent, _ctx: *mut c_void) {
+    if event.is_null() {
+        return;
+    }
+    let ev = unsafe { &*event };
+    if ev.type_ == sys::InputTypeShort && ev.key == sys::InputKeyBack {
+        RUNNING.store(false, Ordering::Release);
+    }
+}
+
 /// Send all bytes on the agent CDC interface in endpoint-sized chunks.
 fn cdc_send_all(bytes: &[u8]) {
     let mut off = 0;
@@ -74,6 +100,17 @@ fn cdc_send_all(bytes: &[u8]) {
 }
 
 fn main(_args: Option<&CStr>) -> i32 {
+    // GUI: a fullscreen viewport so the screen shows the app is alive (replaces
+    // the loader hourglass) and Back exits cleanly.
+    let gui = unsafe { sys::furi_record_open(c"gui".as_ptr()) as *mut sys::Gui };
+    let view_port = unsafe { sys::view_port_alloc() };
+    unsafe {
+        sys::view_port_draw_callback_set(view_port, Some(draw_callback), core::ptr::null_mut());
+        sys::view_port_input_callback_set(view_port, Some(input_callback), core::ptr::null_mut());
+        sys::gui_add_view_port(gui, view_port, sys::GuiLayerFullscreen);
+        sys::view_port_update(view_port);
+    }
+
     // Allocate the ISR->main RX stream buffer and publish its handle first, so a
     // callback firing during the config switch always sees a valid buffer.
     let rx_stream = unsafe { sys::furi_stream_buffer_alloc(RX_STREAM_CAP, 1) };
@@ -92,7 +129,8 @@ fn main(_args: Option<&CStr>) -> i32 {
         sys::furi_hal_usb_set_config(&raw mut sys::usb_cdc_dual, core::ptr::null_mut())
     };
     if !switched {
-        teardown(prev, rx_stream);
+        usb_teardown(prev, rx_stream);
+        gui_teardown(gui, view_port);
         return -1;
     }
 
@@ -103,7 +141,7 @@ fn main(_args: Option<&CStr>) -> i32 {
     let recv_timeout = unsafe { sys::furi_ms_to_ticks(20) };
     let mut idle: u32 = 0;
 
-    while idle < MAX_IDLE {
+    while RUNNING.load(Ordering::Acquire) && idle < MAX_IDLE {
         let got = unsafe {
             sys::furi_stream_buffer_receive(
                 rx_stream,
@@ -155,13 +193,14 @@ fn main(_args: Option<&CStr>) -> i32 {
         }
     }
 
-    teardown(prev, rx_stream);
+    usb_teardown(prev, rx_stream);
+    gui_teardown(gui, view_port);
     0
 }
 
 /// Clear CDC callbacks, restore the previous USB config, and free the RX buffer.
 /// Callbacks are cleared first so no ISR can touch the buffer after it is freed.
-fn teardown(prev: *mut sys::FuriHalUsbInterface, rx_stream: *mut sys::FuriStreamBuffer) {
+fn usb_teardown(prev: *mut sys::FuriHalUsbInterface, rx_stream: *mut sys::FuriStreamBuffer) {
     unsafe {
         sys::furi_hal_cdc_set_callbacks(AGENT_IF, core::ptr::null_mut(), core::ptr::null_mut());
         sys::furi_hal_usb_unlock();
@@ -169,4 +208,13 @@ fn teardown(prev: *mut sys::FuriHalUsbInterface, rx_stream: *mut sys::FuriStream
     }
     RX_STREAM.store(core::ptr::null_mut(), Ordering::Release);
     unsafe { sys::furi_stream_buffer_free(rx_stream) };
+}
+
+/// Remove and free the viewport, and close the GUI record.
+fn gui_teardown(gui: *mut sys::Gui, view_port: *mut sys::ViewPort) {
+    unsafe {
+        sys::gui_remove_view_port(gui, view_port);
+        sys::view_port_free(view_port);
+        sys::furi_record_close(c"gui".as_ptr());
+    }
 }
