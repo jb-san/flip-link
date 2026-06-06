@@ -1,0 +1,23 @@
+cargo-features = ["different-binary-name"]
+
+[package]
+name = "flip-link-fw"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85.0"
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+
+[[bin]]
+name = "flip-link-fw"
+filename = "flip_link.fap"
+bench = false
+test = false
+
+[dependencies]
+flipperzero = "0.16.0"
+flipperzero-sys = "0.16.0"
+flipperzero-rt = "0.16.0"
+flip-proto = { path = "../crates/flip-proto" }
