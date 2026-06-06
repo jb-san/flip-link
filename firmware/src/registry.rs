@@ -28,10 +28,21 @@ static SYS_OPCODES: &[OpcodeEntry] = &[
     },
 ];
 
-static INSTRUMENTS: &[InstrumentEntry] = &[InstrumentEntry {
-    id: "sys",
-    opcodes: SYS_OPCODES,
+static IR_OPCODES: &[OpcodeEntry] = &[OpcodeEntry {
+    opcode: "transmit",
+    handler: crate::ir_instrument::transmit,
 }];
+
+static INSTRUMENTS: &[InstrumentEntry] = &[
+    InstrumentEntry {
+        id: "sys",
+        opcodes: SYS_OPCODES,
+    },
+    InstrumentEntry {
+        id: "ir",
+        opcodes: IR_OPCODES,
+    },
+];
 
 /// Find a handler by instrument id + opcode. Returns None if either is unknown.
 pub fn find(instrument: &str, opcode: &str) -> Option<sys_instrument::Handler> {
