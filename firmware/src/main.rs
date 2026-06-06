@@ -19,7 +19,7 @@ manifest!(
     name = "flip-link",
     app_version = 1,
     has_icon = false,
-    stack_size = 4096,
+    stack_size = 8192,
 );
 
 entry!(main);
@@ -105,9 +105,12 @@ fn cdc_send_all(bytes: &[u8]) {
 }
 
 /// Encode a control body and send it as a frame of `typ` with `seq`.
+/// The frame buffer is heap-allocated (not a large stack array) — this path runs
+/// nested under main's buffers + the minicbor decode, so a stack array here can
+/// overflow the FAP stack (MPU fault).
 fn send_msg<T: minicbor::Encode<()>>(typ: MsgType, seq: u16, body: &T) {
     let payload = flip_proto::messages::to_payload(body);
-    let mut frame = [0u8; ENC_CAP];
+    let mut frame = alloc::vec![0u8; flip_proto::HEADER_SIZE + payload.len() + 2];
     if let Some(n) = encode(typ, 0, seq, &payload, &mut frame) {
         cdc_send_all(&frame[..n]);
     }
