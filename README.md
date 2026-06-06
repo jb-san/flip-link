@@ -52,6 +52,22 @@ The spike firmware time-boxes itself (~5 minutes idle) and restores the USB conf
 exit. If port auto-discovery is ambiguous, set `FLIP_PORT` to the agent port, e.g.
 `FLIP_PORT=$(ls /dev/cu.usbmodemflip_* | tail -1) ./target/debug/flip status`.
 
+## Capabilities & invoke (Slice 1a)
+
+With the FAP running and the daemon up, the CBOR control plane gives capability
+discovery and generic opcode invocation:
+
+```sh
+flip caps                          # list instruments/opcodes
+flip invoke sys version            # -> {protocol: 1, fw: flip-link 0.1}
+flip invoke sys echo msg=hi n=5    # -> {msg: hi, n: 5}
+```
+
+`sys` is a hardware-free test instrument. The daemon reconnects automatically when the
+Flipper re-enumerates (reboot / relaunch); if a CLI command ever hangs after a reflash,
+an old daemon is holding the previous port — `just daemon-stop` (or `just reflash`) clears
+it.
+
 ## Development
 
 ```sh
