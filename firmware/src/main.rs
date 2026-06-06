@@ -238,8 +238,17 @@ fn main(_args: Option<&CStr>) -> i32 {
                 recv_timeout,
             )
         };
+        // Stream captured IR samples out every iteration while a capture is
+        // active (samples arrive via the IR ISR independently of USB activity),
+        // and don't let the idle timeout fire mid-capture.
+        let capturing = ir_instrument::capture_active();
+        if capturing {
+            ir_instrument::drain_capture(send_stream_data);
+        }
         if got == 0 {
-            idle += 1;
+            if !capturing {
+                idle += 1;
+            }
             continue;
         }
         idle = 0;
@@ -281,11 +290,6 @@ fn main(_args: Option<&CStr>) -> i32 {
                 cdc_send_all(&enc[..send_len]);
             }
             acc.drain(0..used);
-        }
-
-        // Stream captured IR samples out while a capture is active.
-        if ir_instrument::capture_active() {
-            ir_instrument::drain_capture(send_stream_data);
         }
     }
 
