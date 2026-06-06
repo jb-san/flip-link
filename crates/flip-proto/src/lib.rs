@@ -5,4 +5,4 @@ pub mod crc16;
 pub mod frame;
 
 pub use crc16::crc16_ccitt_false;
-pub use frame::{Frame, MsgType, DecodeResult, FRAME_MAGIC, HEADER_SIZE, MAX_PAYLOAD};
+pub use frame::{decode, encode, DecodeResult, Frame, MsgType, FRAME_MAGIC, HEADER_SIZE, MAX_PAYLOAD};
