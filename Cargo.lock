@@ -188,6 +188,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "flip-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "flip-core",
+ "flip-proto",
+]
+
+[[package]]
 name = "flip-core"
 version = "0.1.0"
 dependencies = [

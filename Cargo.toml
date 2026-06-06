@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["crates/flip-proto", "crates/flip-core", "crates/flip-daemon", "crates/flip-cli"]
+members = [
+    "crates/flip-proto",
+    "crates/flip-core",
+    "crates/flip-daemon",
+    "crates/flip-client",
+    "crates/flip-cli",
+]
 exclude = ["firmware"]
 
 [workspace.package]
