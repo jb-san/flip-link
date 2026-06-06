@@ -28,8 +28,9 @@ fn main() -> Result<()> {
                     println!("echo:   {:?}", String::from_utf8_lossy(&echo));
                 }
                 Err(e) => {
-                    println!("daemon: up");
-                    println!("device: UNREACHABLE — {e:#}");
+                    // Don't claim the daemon is up — the failure may be that it
+                    // never came up. Report the underlying reason honestly.
+                    println!("status: FAILED — {e:#}");
                     std::process::exit(1);
                 }
             }
