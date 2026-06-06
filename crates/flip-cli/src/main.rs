@@ -15,6 +15,8 @@ struct Cli {
 enum Cmd {
     /// Show daemon + device status (does a PING round-trip).
     Status,
+    /// List instruments and opcodes the device advertises.
+    Caps,
 }
 
 fn main() -> Result<()> {
@@ -32,6 +34,17 @@ fn main() -> Result<()> {
                     // never came up. Report the underlying reason honestly.
                     println!("status: FAILED — {e:#}");
                     std::process::exit(1);
+                }
+            }
+            Ok(())
+        }
+        Cmd::Caps => {
+            let caps = client::caps(Duration::from_secs(3))?;
+            println!("protocol v{}", caps.protocol_version);
+            for inst in &caps.instruments {
+                println!("{}", inst.id);
+                for op in &inst.opcodes {
+                    println!("  {}.{op}", inst.id);
                 }
             }
             Ok(())

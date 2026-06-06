@@ -73,6 +73,48 @@ fn spawn_daemon() -> Result<()> {
     Ok(())
 }
 
+/// Round-trip a single framed control message through the daemon, returning the
+/// reply frame (typ + payload). Used by caps()/invoke().
+fn round_trip(typ: MsgType, payload: &[u8], timeout: Duration) -> Result<(MsgType, Vec<u8>)> {
+    let stream = connect()?;
+    stream.set_read_timeout(Some(Duration::from_millis(50)))?;
+    let mut t = StreamTransport(stream);
+    let mut reader = FrameReader::new();
+
+    let mut buf = vec![0u8; flip_proto::HEADER_SIZE + payload.len() + 2];
+    let n = encode(typ, 0, 1, payload, &mut buf).ok_or_else(|| anyhow!("payload too big"))?;
+    t.write_all(&buf[..n])?;
+
+    let deadline = Instant::now() + timeout;
+    let mut scratch = [0u8; 1024];
+    loop {
+        if let Some(f) = reader.next_frame() {
+            return Ok((f.typ, f.payload));
+        }
+        if Instant::now() >= deadline {
+            return Err(anyhow!("timed out waiting for reply via daemon"));
+        }
+        let got = t.read(&mut scratch)?;
+        if got > 0 {
+            reader.feed(&scratch[..got]);
+        } else {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+}
+
+/// Fetch capabilities (HELLO -> CAPS) via the daemon.
+pub fn caps(timeout: Duration) -> Result<flip_proto::Caps> {
+    let hello = flip_proto::messages::to_payload(&flip_proto::Hello { host_version: 0 });
+    let (typ, payload) = round_trip(MsgType::Hello, &hello, timeout)?;
+    match typ {
+        MsgType::Caps => {
+            flip_proto::messages::from_payload(&payload).map_err(|e| anyhow!("decode CAPS: {e}"))
+        }
+        other => Err(anyhow!("expected CAPS, got {:?}", other)),
+    }
+}
+
 /// Ping the device through the daemon. Returns the echoed payload.
 pub fn ping_through_daemon(payload: &[u8], timeout: Duration) -> Result<Vec<u8>> {
     let stream = connect()?;
