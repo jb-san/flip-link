@@ -208,6 +208,24 @@ mod tests {
     }
 
     #[test]
+    fn decode_stream_data_clamps_negative_samples_to_zero() {
+        let mut out = Vec::new();
+        let payload = (-42i32).to_le_bytes();
+
+        assert_eq!(decode_stream_data(&payload, &mut out), 1);
+        assert_eq!(out, vec![0]);
+    }
+
+    #[test]
+    fn decode_stream_data_ignores_partial_trailing_bytes() {
+        let mut out = Vec::new();
+        let payload = [0x2c, 0x01, 0, 0, 0xff, 0xee];
+
+        assert_eq!(decode_stream_data(&payload, &mut out), 1);
+        assert_eq!(out, vec![300]);
+    }
+
+    #[test]
     fn transmit_params_include_frequency_duty_and_timings() {
         let params = IrSignal {
             frequency: 40_000,

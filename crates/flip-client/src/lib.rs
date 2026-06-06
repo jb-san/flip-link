@@ -44,6 +44,7 @@ pub fn ir_capture(auto_end: Option<Duration>, cancel: &dyn Fn() -> bool) -> Resu
     let mut conn = daemon::open_stream("ir", "capture", Value::Null)?;
     let mut raw = Vec::new();
     let mut last_data = Instant::now();
+    let mut saw_final_stop = false;
 
     loop {
         if cancel() {
@@ -56,7 +57,11 @@ pub fn ir_capture(auto_end: Option<Duration>, cancel: &dyn Fn() -> bool) -> Resu
                     last_data = Instant::now();
                 }
             }
-            Some((MsgType::StreamStop, _)) => break,
+            Some((MsgType::StreamStop, payload)) => {
+                handle_capture_stop(&payload)?;
+                saw_final_stop = true;
+                break;
+            }
             Some((MsgType::Error, payload)) => return Err(decode_agent_error(&payload)),
             Some(_) | None => {}
         }
@@ -68,8 +73,10 @@ pub fn ir_capture(auto_end: Option<Duration>, cancel: &dyn Fn() -> bool) -> Resu
         }
     }
 
-    conn.send(MsgType::StreamStop, &[])?;
-    drain_capture_stop(&mut conn, &mut raw)?;
+    if !saw_final_stop {
+        conn.send(MsgType::StreamStop, &[])?;
+        drain_capture_stop(&mut conn, &mut raw)?;
+    }
 
     let signal = IrSignal::from_capture(raw);
     if signal.timings.is_empty() {
@@ -79,31 +86,33 @@ pub fn ir_capture(auto_end: Option<Duration>, cancel: &dyn Fn() -> bool) -> Resu
 }
 
 fn drain_capture_stop(conn: &mut daemon::StreamConn, raw: &mut Vec<u64>) -> Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + Duration::from_secs(4);
     loop {
         match conn.next_frame(Duration::from_millis(50))? {
             Some((MsgType::StreamData, payload)) => {
                 signal::decode_stream_data(&payload, raw);
             }
             Some((MsgType::StreamStop, payload)) => {
-                if let Ok(stop) =
-                    flip_proto::messages::from_payload::<flip_proto::StreamStop>(&payload)
-                {
-                    if stop.dropped > 0 {
-                        eprintln!(
-                            "warning: {} samples dropped (buffer overflow)",
-                            stop.dropped
-                        );
-                    }
-                }
-                break;
+                handle_capture_stop(&payload)?;
+                return Ok(());
             }
             Some((MsgType::Error, payload)) => return Err(decode_agent_error(&payload)),
             _ => {}
         }
 
         if Instant::now() >= deadline {
-            break;
+            return Err(anyhow!("timed out waiting for IR capture stop"));
+        }
+    }
+}
+
+fn handle_capture_stop(payload: &[u8]) -> Result<()> {
+    if let Ok(stop) = flip_proto::messages::from_payload::<flip_proto::StreamStop>(payload) {
+        if stop.dropped > 0 {
+            return Err(anyhow!(
+                "IR capture dropped {} samples (buffer overflow)",
+                stop.dropped
+            ));
         }
     }
     Ok(())
@@ -156,5 +165,28 @@ mod tests {
             Value::Text("4".into())
         )]))
         .is_err());
+    }
+
+    #[test]
+    fn capture_stop_allows_clean_stop() {
+        let payload = flip_proto::messages::to_payload(&flip_proto::StreamStop { dropped: 0 });
+
+        assert!(handle_capture_stop(&payload).is_ok());
+    }
+
+    #[test]
+    fn capture_stop_rejects_dropped_samples() {
+        let payload = flip_proto::messages::to_payload(&flip_proto::StreamStop { dropped: 2 });
+        let err = handle_capture_stop(&payload).unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "IR capture dropped 2 samples (buffer overflow)"
+        );
+    }
+
+    #[test]
+    fn capture_stop_tolerates_undecodable_payload() {
+        assert!(handle_capture_stop(&[0xff]).is_ok());
     }
 }
