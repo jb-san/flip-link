@@ -65,9 +65,17 @@ status: build
 hw-test:
     FLIPPER_HW=1 cargo test -p flip-core --test hw_ping -- --nocapture
 
-# Full bench flow: build + flash + launch the FAP, then check status.
-# Allow a moment after fw-run for the USB to re-enumerate before `status`.
-bench: fw-run status
+# Full bench flow: flash + launch the FAP, then check status. Flashing the FAP
+# re-enumerates USB onto a new port, and the daemon has no reconnect yet, so we
+# restart it and pause for re-enumeration before `status`.
+bench: fw-run
+    -just daemon-stop
+    sleep 2
+    just status
+
+# Reflash the FAP and clear the stale daemon (which is pinned to the old port).
+# After this, launch the app on-device, then `just status`.
+reflash: daemon-stop fw-send
 
 # --- Daemon ---------------------------------------------------------------
 
