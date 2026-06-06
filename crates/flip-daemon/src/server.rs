@@ -158,7 +158,17 @@ fn relay_stream(
 ) -> Result<()> {
     let mut scratch = [0u8; 1024];
     let mut reader = FrameReader::new();
+    // Set once the client asks to stop: bound how long we wait for the device's
+    // confirming final STREAM_STOP, so a wedged device can't hang this thread.
+    // (We do NOT time out an open capture — a Ctrl-C session may run for minutes.)
+    let mut stop_deadline: Option<std::time::Instant> = None;
     loop {
+        if let Some(deadline) = stop_deadline {
+            if std::time::Instant::now() >= deadline {
+                router.unregister(dev_seq);
+                return Ok(());
+            }
+        }
         // Client -> device: forward a STREAM_STOP (rewriting seq) to end capture.
         match stream.read(&mut scratch) {
             Ok(0) => {
@@ -172,6 +182,9 @@ fn relay_stream(
                 while let Some(f) = reader.next_frame() {
                     if f.typ == MsgType::StreamStop {
                         forward(outbound, MsgType::StreamStop, 0, dev_seq, &[]);
+                        stop_deadline.get_or_insert_with(|| {
+                            std::time::Instant::now() + Duration::from_secs(3)
+                        });
                     }
                 }
             }
