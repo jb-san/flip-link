@@ -22,3 +22,4 @@ flipperzero-sys = "0.16.0"
 flipperzero-rt = "0.16.0"
 flipperzero-alloc = "0.16.0"
 flip-proto = { path = "../crates/flip-proto", features = ["alloc"] }
+minicbor = { version = "2.2", default-features = false }

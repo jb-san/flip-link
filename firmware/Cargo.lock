@@ -68,6 +68,7 @@ dependencies = [
  "flipperzero-alloc",
  "flipperzero-rt",
  "flipperzero-sys",
+ "minicbor",
 ]
 
 [[package]]

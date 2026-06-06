@@ -104,6 +104,44 @@ fn cdc_send_all(bytes: &[u8]) {
     }
 }
 
+/// Encode a control body and send it as a frame of `typ` with `seq`.
+fn send_msg<T: minicbor::Encode<()>>(typ: MsgType, seq: u16, body: &T) {
+    let payload = flip_proto::messages::to_payload(body);
+    let mut frame = [0u8; ENC_CAP];
+    if let Some(n) = encode(typ, 0, seq, &payload, &mut frame) {
+        cdc_send_all(&frame[..n]);
+    }
+}
+
+/// Handle one decoded control frame (HELLO/REQ); PING is handled inline in the
+/// drain loop. Unknown/other types are ignored.
+fn handle_frame(typ: MsgType, seq: u16, payload: &[u8]) {
+    use flip_proto::messages::{from_payload, AgentError, Req, Resp};
+    match typ {
+        MsgType::Hello => {
+            let caps = registry::build_caps();
+            send_msg(MsgType::Caps, seq, &caps);
+        }
+        MsgType::Req => match from_payload::<Req>(payload) {
+            Ok(req) => match registry::dispatch(&req.instrument, &req.opcode, &req.params) {
+                Ok(result) => send_msg(MsgType::Resp, seq, &Resp { ok: true, result }),
+                Err((code, message)) => {
+                    send_msg(MsgType::Error, seq, &AgentError { code, message })
+                }
+            },
+            Err(_) => send_msg(
+                MsgType::Error,
+                seq,
+                &AgentError {
+                    code: flip_proto::messages::ERR_BAD_PARAMS,
+                    message: alloc::string::String::from("bad REQ body"),
+                },
+            ),
+        },
+        _ => {}
+    }
+}
+
 fn main(_args: Option<&CStr>) -> i32 {
     // GUI: a fullscreen viewport so the screen shows the app is alive (replaces
     // the loader hourglass) and Back exits cleanly.
@@ -173,10 +211,13 @@ fn main(_args: Option<&CStr>) -> i32 {
             let mut send_len = 0usize;
             match decode(&acc[..acc_len]) {
                 DecodeResult::Frame(f, consumed) => {
-                    if f.typ == MsgType::Ping {
-                        if let Some(en) = encode(MsgType::Pong, 0, f.seq, f.payload, &mut enc) {
-                            send_len = en;
+                    match f.typ {
+                        MsgType::Ping => {
+                            if let Some(en) = encode(MsgType::Pong, 0, f.seq, f.payload, &mut enc) {
+                                send_len = en;
+                            }
                         }
+                        _ => handle_frame(f.typ, f.seq, f.payload),
                     }
                     used = consumed;
                 }
