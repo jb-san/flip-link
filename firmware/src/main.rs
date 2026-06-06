@@ -5,6 +5,7 @@ extern crate alloc;
 extern crate flipperzero_alloc;
 extern crate flipperzero_rt;
 
+mod ir_instrument;
 mod registry;
 mod sys_instrument;
 
