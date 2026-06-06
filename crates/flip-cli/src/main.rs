@@ -1,3 +1,4 @@
+mod capture;
 mod client;
 mod ir;
 mod kv;
@@ -57,6 +58,16 @@ enum IrCmd {
         /// Duty cycle in permille (e.g. 330 = 33%).
         #[arg(long, default_value_t = 330)]
         duty: u64,
+    },
+    /// Capture IR timings to a file (or stdout). Stops on Ctrl-C, or after a
+    /// silence gap with --auto-end.
+    Capture {
+        /// Write timings here (default: stdout).
+        #[arg(long)]
+        output: Option<String>,
+        /// Auto-stop after this many ms of silence (default: run until Ctrl-C).
+        #[arg(long)]
+        auto_end: Option<u64>,
     },
 }
 
@@ -118,6 +129,7 @@ fn main() -> Result<()> {
                 );
                 Ok(())
             }
+            IrCmd::Capture { output, auto_end } => capture::run(auto_end, output.as_deref()),
         },
     }
 }

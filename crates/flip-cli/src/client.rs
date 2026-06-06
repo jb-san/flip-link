@@ -262,6 +262,63 @@ pub fn render_value(v: &flip_proto::Value) -> String {
     }
 }
 
+/// A persistent daemon connection for streaming (capture). Owns one socket.
+pub struct StreamConn {
+    transport: StreamTransport,
+    reader: FrameReader,
+}
+
+impl StreamConn {
+    /// Send a framed control message (seq fixed at 1 for the single stream).
+    pub fn send(&mut self, typ: MsgType, payload: &[u8]) -> Result<()> {
+        let mut buf = vec![0u8; flip_proto::HEADER_SIZE + payload.len() + 2];
+        let n = encode(typ, 0, 1, payload, &mut buf).ok_or_else(|| anyhow!("payload too big"))?;
+        self.transport.write_all(&buf[..n])
+    }
+
+    /// Read the next frame, waiting up to `timeout`. `Ok(None)` = nothing yet.
+    pub fn next_frame(&mut self, timeout: Duration) -> Result<Option<(MsgType, Vec<u8>)>> {
+        let deadline = Instant::now() + timeout;
+        let mut scratch = [0u8; 1024];
+        loop {
+            if let Some(f) = self.reader.next_frame() {
+                return Ok(Some((f.typ, f.payload)));
+            }
+            if Instant::now() >= deadline {
+                return Ok(None);
+            }
+            let got = self.transport.read(&mut scratch)?;
+            if got > 0 {
+                self.reader.feed(&scratch[..got]);
+            } else {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+    }
+}
+
+/// Open a streaming connection by sending a REQ; returns the connection so the
+/// caller can read STREAM_* frames. (The daemon switches the route to a stream
+/// relay when the device replies STREAM_START.)
+pub fn open_stream(instrument: &str, opcode: &str, params: flip_proto::Value) -> Result<StreamConn> {
+    let stream = connect()?;
+    stream.set_read_timeout(Some(Duration::from_millis(50)))?;
+    let mut transport = StreamTransport(stream);
+    let req = flip_proto::Req {
+        instrument: instrument.to_string(),
+        opcode: opcode.to_string(),
+        params,
+    };
+    let body = flip_proto::messages::to_payload(&req);
+    let mut buf = vec![0u8; flip_proto::HEADER_SIZE + body.len() + 2];
+    let n = encode(MsgType::Req, 0, 1, &body, &mut buf).ok_or_else(|| anyhow!("payload too big"))?;
+    transport.write_all(&buf[..n])?;
+    Ok(StreamConn {
+        transport,
+        reader: FrameReader::new(),
+    })
+}
+
 /// Ping the device through the daemon. Returns the echoed payload.
 pub fn ping_through_daemon(payload: &[u8], timeout: Duration) -> Result<Vec<u8>> {
     let stream = connect()?;

@@ -13,3 +13,4 @@ flip-core = { path = "../flip-core" }
 flip-proto = { path = "../flip-proto", features = ["alloc"] }
 anyhow = { workspace = true }
 clap = { workspace = true }
+ctrlc = "3"
