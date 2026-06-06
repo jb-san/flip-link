@@ -1,4 +1,5 @@
 mod client;
+mod kv;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -17,6 +18,13 @@ enum Cmd {
     Status,
     /// List instruments and opcodes the device advertises.
     Caps,
+    /// Invoke an instrument opcode with optional key=value params.
+    Invoke {
+        instrument: String,
+        opcode: String,
+        /// Zero or more key=value params.
+        params: Vec<String>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -47,6 +55,16 @@ fn main() -> Result<()> {
                     println!("  {}.{op}", inst.id);
                 }
             }
+            Ok(())
+        }
+        Cmd::Invoke {
+            instrument,
+            opcode,
+            params,
+        } => {
+            let params = kv::parse_params(&params)?;
+            let resp = client::invoke(&instrument, &opcode, params, Duration::from_secs(3))?;
+            println!("{}", client::render_value(&resp.result));
             Ok(())
         }
     }

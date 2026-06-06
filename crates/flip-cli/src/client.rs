@@ -115,6 +115,58 @@ pub fn caps(timeout: Duration) -> Result<flip_proto::Caps> {
     }
 }
 
+/// Invoke an opcode (REQ -> RESP/ERROR) via the daemon.
+pub fn invoke(
+    instrument: &str,
+    opcode: &str,
+    params: flip_proto::Value,
+    timeout: Duration,
+) -> Result<flip_proto::Resp> {
+    let req = flip_proto::Req {
+        instrument: instrument.to_string(),
+        opcode: opcode.to_string(),
+        params,
+    };
+    let body = flip_proto::messages::to_payload(&req);
+    let (typ, payload) = round_trip(MsgType::Req, &body, timeout)?;
+    match typ {
+        MsgType::Resp => {
+            flip_proto::messages::from_payload(&payload).map_err(|e| anyhow!("decode RESP: {e}"))
+        }
+        MsgType::Error => {
+            let e: flip_proto::AgentError = flip_proto::messages::from_payload(&payload)
+                .map_err(|e| anyhow!("decode ERROR: {e}"))?;
+            Err(anyhow!("device error {}: {}", e.code, e.message))
+        }
+        other => Err(anyhow!("expected RESP/ERROR, got {:?}", other)),
+    }
+}
+
+/// One-line rendering of a result Value for the CLI.
+pub fn render_value(v: &flip_proto::Value) -> String {
+    use flip_proto::Value::*;
+    match v {
+        Null => "null".to_string(),
+        Bool(b) => b.to_string(),
+        U64(n) => n.to_string(),
+        I64(n) => n.to_string(),
+        Text(s) => s.clone(),
+        Bytes(b) => format!("0x{}", b.iter().map(|x| format!("{x:02x}")).collect::<String>()),
+        Array(a) => {
+            let inner = a.iter().map(render_value).collect::<Vec<_>>().join(", ");
+            format!("[{inner}]")
+        }
+        Map(m) => {
+            let inner = m
+                .iter()
+                .map(|(k, v)| format!("{k}: {}", render_value(v)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{{{inner}}}")
+        }
+    }
+}
+
 /// Ping the device through the daemon. Returns the echoed payload.
 pub fn ping_through_daemon(payload: &[u8], timeout: Duration) -> Result<Vec<u8>> {
     let stream = connect()?;
