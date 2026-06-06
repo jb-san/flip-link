@@ -83,10 +83,18 @@ reflash: daemon-stop fw-send
 daemon: build
     ./target/debug/flip-daemon run
 
+# Report daemon + device status (does not spawn a daemon).
+daemon-status: build
+    ./target/debug/flip daemon status
+
 # Stop any running daemon and clear its socket.
 daemon-stop:
     -pkill -f 'flip-daemon run'
     -rm -f "{{sock}}"
+
+# Tail the auto-spawned daemon's log (reconnect chatter lives here, not the terminal).
+daemon-log:
+    tail -f "${XDG_RUNTIME_DIR:-/tmp}/flip-daemon.log"
 
 # --- Maintenance ----------------------------------------------------------
 
