@@ -18,7 +18,7 @@ See [`docs/superpowers/specs/`](docs/superpowers/specs/) for the architecture an
 (fw 1.4.3 / API 87.1). The FAP switches USB to dual-CDC, shows a status screen, and
 exits on Back.
 
-- Host: `cargo build` (produces `flip` + `flip-daemon`), `cargo test` (11 tests).
+- Host: `cargo build` (produces `flip` + `flip-daemon`), `cargo test`.
 - Firmware: builds to `firmware/target/thumbv7em-none-eabihf/release/flip_link.fap`.
 
 > Known limitation (Slice 1): the daemon opens the serial port once with no reconnect.

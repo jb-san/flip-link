@@ -23,7 +23,7 @@ pub fn log_path() -> PathBuf {
     PathBuf::from("/tmp/flip-daemon.log")
 }
 
-/// Connect to the daemon socket WITHOUT spawning one. `Ok(None)` = not running.
+/// Connect to the daemon socket WITHOUT spawning one. `None` = not running.
 pub fn try_connect() -> Option<UnixStream> {
     UnixStream::connect(socket_path()).ok()
 }
