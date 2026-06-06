@@ -65,6 +65,7 @@ version = "0.1.0"
 dependencies = [
  "flip-proto",
  "flipperzero",
+ "flipperzero-alloc",
  "flipperzero-rt",
  "flipperzero-sys",
 ]
@@ -72,6 +73,9 @@ dependencies = [
 [[package]]
 name = "flip-proto"
 version = "0.1.0"
+dependencies = [
+ "minicbor",
+]
 
 [[package]]
 name = "flipperzero"
@@ -88,6 +92,15 @@ dependencies = [
  "rand_core",
  "ufmt",
  "uuid",
+]
+
+[[package]]
+name = "flipperzero-alloc"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a44929c8030f9bf9117a91762875227764b4b7acb4f211f622e152876d79c48c"
+dependencies = [
+ "flipperzero-sys",
 ]
 
 [[package]]
@@ -127,7 +140,7 @@ checksum = "0d426aaeaea1618acb3f9dfe040553e87cc932ec2f6a71ea3ad2174a340dab4d"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -147,6 +160,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "224399e74b87b5f3557511d98dff8b14089b3dadafcab6bb93eab67d3aace965"
 dependencies = [
  "scopeguard",
+]
+
+[[package]]
+name = "minicbor"
+version = "2.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b7a5041e12946f8b7d3f5a9d96383a19d694b9335457c522be7815b9abafb02"
+dependencies = [
+ "minicbor-derive",
+]
+
+[[package]]
+name = "minicbor-derive"
+version = "0.19.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c9303a7d70578b101a21b3043ade4ab825c59063bbcd89af1066729399b79c6"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -191,6 +224,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "syn"
+version = "2.0.117"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e665b8803e7b1d2a727f4023456bbbbe74da67099c585258af0ad9c5013b9b99"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
+]
+
+[[package]]
 name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -214,7 +258,7 @@ checksum = "d337d3be617449165cb4633c8dece429afd83f84051024079f97ad32a9663716"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 1.0.109",
 ]
 
 [[package]]

@@ -2,6 +2,8 @@
 #![no_std]
 
 extern crate flipperzero_rt;
+extern crate alloc;
+extern crate flipperzero_alloc;
 
 use core::ffi::{c_void, CStr};
 use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
