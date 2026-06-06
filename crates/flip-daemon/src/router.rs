@@ -44,10 +44,12 @@ impl Router {
     }
 
     /// Deliver an inbound device frame to the client that owns its seq (if any).
+    /// The route is NOT removed here — the client unregisters when the request
+    /// (one reply) or stream (final STREAM_STOP) completes.
     pub fn deliver(&self, frame: OwnedFrame) {
         let sender = {
-            let mut g = self.inner.lock().unwrap();
-            g.routes.remove(&frame.seq)
+            let g = self.inner.lock().unwrap();
+            g.routes.get(&frame.seq).cloned()
         };
         if let Some(tx) = sender {
             let _ = tx.send(frame);

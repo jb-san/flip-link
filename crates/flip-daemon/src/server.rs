@@ -95,22 +95,23 @@ fn serve_client(
                 }
                 continue;
             }
-            // Proxy: rewrite seq, forward to device, await routed reply.
+            // Proxy: rewrite seq, forward to device, await the first reply.
             let client_seq = frame.seq;
             let dev_seq = router.register(reply_tx.clone());
-            let mut buf = vec![0u8; flip_proto::HEADER_SIZE + frame.payload.len() + 2];
-            let n = flip_proto::encode(frame.typ, frame.flags, dev_seq, &frame.payload, &mut buf)
-                .expect("reframe");
-            outbound.send(buf[..n].to_vec()).ok();
+            forward(&outbound, frame.typ, frame.flags, dev_seq, &frame.payload);
 
             match reply_rx.recv_timeout(Duration::from_secs(3)) {
+                Ok(reply) if reply.typ == MsgType::StreamStart => {
+                    // Streaming: relay until the final STREAM_STOP.
+                    write_frame(&mut stream, reply.typ, client_seq, &reply.payload)?;
+                    relay_stream(&mut stream, &reply_rx, &router, &outbound, client_seq, dev_seq)?;
+                }
                 Ok(reply) => {
+                    // One-shot RESP/ERROR.
+                    router.unregister(dev_seq);
                     write_frame(&mut stream, reply.typ, client_seq, &reply.payload)?;
                 }
                 Err(_) => {
-                    // Timed out (e.g. device reconnecting): drop the pending route
-                    // so a late device reply can't contaminate a future request,
-                    // then tell the client.
                     router.unregister(dev_seq);
                     let body = flip_proto::messages::to_payload(&flip_proto::AgentError {
                         code: flip_proto::messages::ERR_INTERNAL,
@@ -128,4 +129,68 @@ fn write_frame(stream: &mut UnixStream, typ: MsgType, seq: u16, payload: &[u8]) 
     let n = flip_proto::encode(typ, 0, seq, payload, &mut buf).expect("frame");
     stream.write_all(&buf[..n])?;
     Ok(())
+}
+
+/// Frame `payload` with a (rewritten) seq and queue it to the device.
+fn forward(outbound: &Sender<Vec<u8>>, typ: MsgType, flags: u8, seq: u16, payload: &[u8]) {
+    let mut buf = vec![0u8; flip_proto::HEADER_SIZE + payload.len() + 2];
+    let n = flip_proto::encode(typ, flags, seq, payload, &mut buf).expect("reframe");
+    let _ = outbound.send(buf[..n].to_vec());
+}
+
+/// Bidirectional relay for an active stream: device STREAM_DATA/STOP -> client,
+/// client STREAM_STOP -> device. Ends when the device sends the final
+/// STREAM_STOP. The client socket already has a 50ms read timeout.
+fn relay_stream(
+    stream: &mut UnixStream,
+    reply_rx: &std::sync::mpsc::Receiver<OwnedFrame>,
+    router: &Router,
+    outbound: &Sender<Vec<u8>>,
+    client_seq: u16,
+    dev_seq: u16,
+) -> Result<()> {
+    let mut scratch = [0u8; 1024];
+    let mut reader = FrameReader::new();
+    loop {
+        // Client -> device: forward a STREAM_STOP (rewriting seq) to end capture.
+        match stream.read(&mut scratch) {
+            Ok(0) => {
+                // Client hung up mid-stream: ask the device to stop, then exit.
+                forward(outbound, MsgType::StreamStop, 0, dev_seq, &[]);
+                router.unregister(dev_seq);
+                return Ok(());
+            }
+            Ok(n) => {
+                reader.feed(&scratch[..n]);
+                while let Some(f) = reader.next_frame() {
+                    if f.typ == MsgType::StreamStop {
+                        forward(outbound, MsgType::StreamStop, 0, dev_seq, &[]);
+                    }
+                }
+            }
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut => {}
+            Err(e) => {
+                router.unregister(dev_seq);
+                return Err(e.into());
+            }
+        }
+
+        // Device -> client: relay stream frames; the final STREAM_STOP ends it.
+        match reply_rx.recv_timeout(Duration::from_millis(20)) {
+            Ok(f) => {
+                write_frame(stream, f.typ, client_seq, &f.payload)?;
+                if f.typ == MsgType::StreamStop {
+                    router.unregister(dev_seq);
+                    return Ok(());
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                router.unregister(dev_seq);
+                return Ok(());
+            }
+        }
+    }
 }
