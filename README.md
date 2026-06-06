@@ -7,6 +7,7 @@ See [`docs/superpowers/specs/`](docs/superpowers/specs/) for the architecture an
 - `crates/flip-proto` — the wire contract (frame codec; `no_std`, shared by host + firmware)
 - `crates/flip-core`  — serial transport + device link
 - `crates/flip-daemon`— owns the device link, relays frames over a unix socket
+- `crates/flip-client` — reusable host API for daemon-backed capabilities, invoke, and IR helpers
 - `crates/flip-cli`   — the `flip` CLI (the **primary testing harness**)
 - `firmware/`         — the on-device FAP (flipperzero-rs; a standalone package excluded
   from the host workspace because it builds for the `thumbv7em-none-eabihf` target)

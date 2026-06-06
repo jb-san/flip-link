@@ -6,7 +6,7 @@ use flip_proto::{Caps, MsgType, Resp, Value};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-pub use daemon::ping_through_daemon;
+pub use daemon::{connect, log_path, open_stream, ping_through_daemon, try_connect, StreamConn};
 pub use signal::IrSignal;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
