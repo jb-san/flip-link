@@ -79,10 +79,13 @@ flip ir transmit --file remote.txt                   # replay at the target devi
 ```
 
 `ir capture` streams raw timings until **Ctrl-C**, or `--auto-end <ms>` of silence (good for
-one button press). The output is the whitespace/newline µs format `ir transmit --file`
-consumes — so capture→transmit round-trips. `--output` writes a file (default: stdout);
-`ir transmit` also takes `--freq`/`--duty` (defaults 38000 Hz / 330 permille). `#` lines in
-a timings file are comments.
+one button press). The saved output is a full IR signal record, not just bare timings:
+`# freq=<Hz>` and `# duty=<permille>` directive lines followed by µs timings.
+`--output` writes a file (default: stdout), and `ir transmit --file` consumes the record so
+capture→transmit round-trips. Old whitespace timing files with normal `#` comments still
+work; without directive lines they default to 38000 Hz / 330 permille. The
+`flip ir transmit --freq` and `--duty` flags are optional overrides for the file/header
+values.
 
 ## Development
 
