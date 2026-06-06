@@ -15,6 +15,7 @@ struct OpcodeEntry {
 struct InstrumentEntry {
     id: &'static str,
     opcodes: &'static [OpcodeEntry],
+    streaming_opcodes: &'static [&'static str],
 }
 
 static SYS_OPCODES: &[OpcodeEntry] = &[
@@ -37,10 +38,12 @@ static INSTRUMENTS: &[InstrumentEntry] = &[
     InstrumentEntry {
         id: "sys",
         opcodes: SYS_OPCODES,
+        streaming_opcodes: &[],
     },
     InstrumentEntry {
         id: "ir",
         opcodes: IR_OPCODES,
+        streaming_opcodes: &["capture"],
     },
 ];
 
@@ -63,13 +66,14 @@ pub fn has_instrument(instrument: &str) -> bool {
 pub fn build_caps() -> Caps {
     let instruments = INSTRUMENTS
         .iter()
-        .map(|i| Instrument {
-            id: i.id.to_string(),
-            opcodes: i
-                .opcodes
-                .iter()
-                .map(|o| o.opcode.to_string())
-                .collect::<Vec<String>>(),
+        .map(|i| {
+            let mut opcodes: Vec<String> =
+                i.opcodes.iter().map(|o| o.opcode.to_string()).collect();
+            opcodes.extend(i.streaming_opcodes.iter().map(|s| s.to_string()));
+            Instrument {
+                id: i.id.to_string(),
+                opcodes,
+            }
         })
         .collect();
     Caps {
