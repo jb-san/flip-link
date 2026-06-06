@@ -1,4 +1,5 @@
 mod client;
+mod ir;
 mod kv;
 
 use anyhow::Result;
@@ -30,12 +31,33 @@ enum Cmd {
         #[command(subcommand)]
         cmd: DaemonCmd,
     },
+    /// IR instrument commands.
+    Ir {
+        #[command(subcommand)]
+        cmd: IrCmd,
+    },
 }
 
 #[derive(Subcommand)]
 enum DaemonCmd {
     /// Report whether the daemon is running and the device connected.
     Status,
+}
+
+#[derive(Subcommand)]
+enum IrCmd {
+    /// Transmit IR timings from a file.
+    Transmit {
+        /// Path to a file of whitespace/newline-separated µs timings.
+        #[arg(long)]
+        file: String,
+        /// Carrier frequency in Hz.
+        #[arg(long, default_value_t = 38000)]
+        freq: u64,
+        /// Duty cycle in permille (e.g. 330 = 33%).
+        #[arg(long, default_value_t = 330)]
+        duty: u64,
+    },
 }
 
 fn main() -> Result<()> {
@@ -81,6 +103,16 @@ fn main() -> Result<()> {
         Cmd::Daemon { cmd } => match cmd {
             DaemonCmd::Status => {
                 client::daemon_status();
+                Ok(())
+            }
+        },
+        Cmd::Ir { cmd } => match cmd {
+            IrCmd::Transmit { file, freq, duty } => {
+                let timings = ir::load_timings_file(&file)?;
+                let count = timings.len();
+                let params = ir::transmit_params(timings, freq, duty);
+                let resp = client::invoke("ir", "transmit", params, Duration::from_secs(10))?;
+                println!("transmitted {count} edges: {}", client::render_value(&resp.result));
                 Ok(())
             }
         },
