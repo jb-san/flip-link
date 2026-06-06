@@ -70,9 +70,19 @@ fn serve_client(
 
         while let Some(frame) = reader.next_frame() {
             if frame.typ == MsgType::Hello {
-                // Answer from cache without touching the device.
+                // Answer from cache without touching the device. If the device
+                // hasn't connected/handshaked yet, CAPS is empty — report that
+                // honestly instead of sending an undecodable empty body.
                 let caps = router.caps();
-                write_frame(&mut stream, MsgType::Caps, frame.seq, &caps)?;
+                if caps.is_empty() {
+                    let body = flip_proto::messages::to_payload(&flip_proto::AgentError {
+                        code: flip_proto::messages::ERR_INTERNAL,
+                        message: "device not connected".into(),
+                    });
+                    write_frame(&mut stream, MsgType::Error, frame.seq, &body)?;
+                } else {
+                    write_frame(&mut stream, MsgType::Caps, frame.seq, &caps)?;
+                }
                 continue;
             }
             // Proxy: rewrite seq, forward to device, await routed reply.
@@ -88,7 +98,10 @@ fn serve_client(
                     write_frame(&mut stream, reply.typ, client_seq, &reply.payload)?;
                 }
                 Err(_) => {
-                    // Timed out (e.g. device reconnecting): tell the client.
+                    // Timed out (e.g. device reconnecting): drop the pending route
+                    // so a late device reply can't contaminate a future request,
+                    // then tell the client.
+                    router.unregister(dev_seq);
                     let body = flip_proto::messages::to_payload(&flip_proto::AgentError {
                         code: flip_proto::messages::ERR_INTERNAL,
                         message: "device timeout".into(),

@@ -12,7 +12,8 @@ struct Inner {
     caps_payload: Vec<u8>, // cached CAPS body (empty until first connect)
 }
 
-#[derive(Default)]
+// No `#[derive(Default)]`: a `Router::default()` would start `next_seq` at 0,
+// which aliases the HELLO seq used during the CAPS handshake. Always use `new()`.
 pub struct Router {
     inner: Mutex<Inner>,
 }
@@ -34,6 +35,12 @@ impl Router {
         g.next_seq = g.next_seq.wrapping_add(1).max(1);
         g.routes.insert(seq, reply_to);
         seq
+    }
+
+    /// Drop a pending route (e.g. on client-side timeout) so a late device reply
+    /// can't be delivered into a stale channel and contaminate a later request.
+    pub fn unregister(&self, seq: u16) {
+        self.inner.lock().unwrap().routes.remove(&seq);
     }
 
     /// Deliver an inbound device frame to the client that owns its seq (if any).
