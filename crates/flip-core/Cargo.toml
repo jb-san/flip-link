@@ -5,6 +5,6 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-flip-proto = { path = "../flip-proto" }
+flip-proto = { path = "../flip-proto", features = ["alloc"] }
 serialport = { workspace = true }
 anyhow = { workspace = true }
