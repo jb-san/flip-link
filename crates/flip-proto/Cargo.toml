@@ -5,4 +5,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-# none yet — CRC and framing are hand-rolled; minicbor arrives in Slice 1.
+minicbor = { version = "2.2", default-features = false, features = ["derive"] }
+
+[features]
+default = []
+alloc = ["minicbor/alloc"]
