@@ -1,4 +1,5 @@
 /target
 **/target
+.worktrees/
 *.fap
 .DS_Store
