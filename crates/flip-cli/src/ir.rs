@@ -48,7 +48,10 @@ mod tests {
     #[test]
     fn parses_timings_with_comments_and_whitespace() {
         let text = "# an SOS\n9000 4500\n560 560\n560\n";
-        assert_eq!(parse_timings(text).unwrap(), vec![9000, 4500, 560, 560, 560]);
+        assert_eq!(
+            parse_timings(text).unwrap(),
+            vec![9000, 4500, 560, 560, 560]
+        );
     }
 
     #[test]

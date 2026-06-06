@@ -112,7 +112,10 @@ fn main() -> Result<()> {
                 let count = timings.len();
                 let params = ir::transmit_params(timings, freq, duty);
                 let resp = client::invoke("ir", "transmit", params, Duration::from_secs(10))?;
-                println!("transmitted {count} edges: {}", client::render_value(&resp.result));
+                println!(
+                    "transmitted {count} edges: {}",
+                    client::render_value(&resp.result)
+                );
                 Ok(())
             }
         },
