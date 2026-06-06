@@ -27,17 +27,21 @@ pub fn run() -> Result<()> {
 
     let router = Arc::new(Router::new());
     let (outbound_tx, outbound_rx) = channel::<Vec<u8>>();
+    // `wake` lets a client thread poke the (possibly idle) device owner so it
+    // retries connecting when a command arrives.
+    let (wake_tx, wake_rx) = channel::<()>();
     {
         let router = router.clone();
-        std::thread::spawn(move || device_conn::run(router, outbound_rx));
+        std::thread::spawn(move || device_conn::run(router, outbound_rx, wake_rx));
     }
 
     for stream in listener.incoming() {
         let stream = stream?;
         let router = router.clone();
         let outbound = outbound_tx.clone();
+        let wake = wake_tx.clone();
         std::thread::spawn(move || {
-            if let Err(e) = serve_client(stream, router, outbound) {
+            if let Err(e) = serve_client(stream, router, outbound, wake) {
                 eprintln!("client session ended: {e:#}");
             }
         });
@@ -51,6 +55,7 @@ fn serve_client(
     mut stream: UnixStream,
     router: Arc<Router>,
     outbound: Sender<Vec<u8>>,
+    wake: Sender<()>,
 ) -> Result<()> {
     stream.set_read_timeout(Some(Duration::from_millis(50)))?;
     let mut reader = FrameReader::new();
@@ -61,7 +66,12 @@ fn serve_client(
     loop {
         match stream.read(&mut scratch) {
             Ok(0) => return Ok(()), // client closed
-            Ok(n) => reader.feed(&scratch[..n]),
+            Ok(n) => {
+                reader.feed(&scratch[..n]);
+                // A command arrived — wake the device owner if it's idle so it
+                // retries connecting.
+                let _ = wake.send(());
+            }
             Err(e)
                 if e.kind() == std::io::ErrorKind::WouldBlock
                     || e.kind() == std::io::ErrorKind::TimedOut => {}

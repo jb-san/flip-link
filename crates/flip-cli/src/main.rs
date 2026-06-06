@@ -25,6 +25,17 @@ enum Cmd {
         /// Zero or more key=value params.
         params: Vec<String>,
     },
+    /// Daemon control.
+    Daemon {
+        #[command(subcommand)]
+        cmd: DaemonCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum DaemonCmd {
+    /// Report whether the daemon is running and the device connected.
+    Status,
 }
 
 fn main() -> Result<()> {
@@ -67,5 +78,11 @@ fn main() -> Result<()> {
             println!("{}", client::render_value(&resp.result));
             Ok(())
         }
+        Cmd::Daemon { cmd } => match cmd {
+            DaemonCmd::Status => {
+                client::daemon_status();
+                Ok(())
+            }
+        },
     }
 }

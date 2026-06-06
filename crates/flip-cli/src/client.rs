@@ -4,7 +4,7 @@ use flip_proto::{encode, MsgType};
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 fn socket_path() -> PathBuf {
@@ -12,6 +12,19 @@ fn socket_path() -> PathBuf {
         return PathBuf::from(dir).join("flip-link.sock");
     }
     PathBuf::from("/tmp/flip-link.sock")
+}
+
+/// Where an auto-spawned daemon's logs go (so they don't pollute the terminal).
+pub fn log_path() -> PathBuf {
+    if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
+        return PathBuf::from(dir).join("flip-daemon.log");
+    }
+    PathBuf::from("/tmp/flip-daemon.log")
+}
+
+/// Connect to the daemon socket WITHOUT spawning one. `Ok(None)` = not running.
+pub fn try_connect() -> Option<UnixStream> {
+    UnixStream::connect(socket_path()).ok()
 }
 
 /// A UnixStream wrapped as a Transport so we can reuse DeviceLink-style framing.
@@ -66,11 +79,90 @@ fn spawn_daemon() -> Result<()> {
     } else {
         PathBuf::from("flip-daemon")
     };
+    // Redirect the daemon's output to a log file so its reconnect chatter never
+    // lands in the user's terminal. `flip daemon status` (or tailing the log)
+    // surfaces it on demand.
+    let (out, err) = match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path())
+    {
+        Ok(f) => match f.try_clone() {
+            Ok(f2) => (Stdio::from(f), Stdio::from(f2)),
+            Err(_) => (Stdio::from(f), Stdio::null()),
+        },
+        Err(_) => (Stdio::null(), Stdio::null()),
+    };
     Command::new(program)
         .arg("run")
+        .stdin(Stdio::null())
+        .stdout(out)
+        .stderr(err)
         .spawn()
         .context("spawn flip-daemon")?;
     Ok(())
+}
+
+/// Report daemon + device status WITHOUT spawning a daemon. Prints one block.
+pub fn daemon_status() {
+    let stream = match try_connect() {
+        Some(s) => s,
+        None => {
+            println!("daemon: not running");
+            println!("log:    {}", log_path().display());
+            return;
+        }
+    };
+    println!("daemon: running");
+    // Ask for CAPS (HELLO). Connected device -> CAPS; otherwise the daemon
+    // replies ERROR "device not connected".
+    if stream
+        .set_read_timeout(Some(Duration::from_millis(50)))
+        .is_err()
+    {
+        println!("device: unknown (socket error)");
+        return;
+    }
+    let mut t = StreamTransport(stream);
+    let mut reader = FrameReader::new();
+    let hello = flip_proto::messages::to_payload(&flip_proto::Hello { host_version: 0 });
+    let mut buf = vec![0u8; flip_proto::HEADER_SIZE + hello.len() + 2];
+    let n = encode(MsgType::Hello, 0, 1, &hello, &mut buf).unwrap();
+    if t.write_all(&buf[..n]).is_err() {
+        println!("device: unknown (write error)");
+        return;
+    }
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut scratch = [0u8; 1024];
+    loop {
+        if let Some(f) = reader.next_frame() {
+            match f.typ {
+                MsgType::Caps => {
+                    match flip_proto::messages::from_payload::<flip_proto::Caps>(&f.payload) {
+                        Ok(caps) => {
+                            println!("device: connected ({} instruments)", caps.instruments.len())
+                        }
+                        Err(_) => println!("device: connected (CAPS undecodable)"),
+                    }
+                }
+                _ => println!("device: disconnected"),
+            }
+            println!("log:    {}", log_path().display());
+            return;
+        }
+        if Instant::now() >= deadline {
+            println!("device: unknown (no reply)");
+            return;
+        }
+        match t.read(&mut scratch) {
+            Ok(got) if got > 0 => reader.feed(&scratch[..got]),
+            Ok(_) => std::thread::sleep(Duration::from_millis(5)),
+            Err(_) => {
+                println!("device: unknown (read error)");
+                return;
+            }
+        }
+    }
 }
 
 /// Round-trip a single framed control message through the daemon, returning the
