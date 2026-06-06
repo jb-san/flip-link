@@ -12,8 +12,14 @@ pub mod frame;
 #[cfg(feature = "alloc")]
 pub mod value;
 
+#[cfg(feature = "alloc")]
+pub mod messages;
+
 pub use crc16::crc16_ccitt_false;
 pub use frame::{decode, encode, DecodeResult, Frame, MsgType, FRAME_MAGIC, HEADER_SIZE, MAX_PAYLOAD};
 
 #[cfg(feature = "alloc")]
 pub use value::Value;
+
+#[cfg(feature = "alloc")]
+pub use messages::{AgentError, Caps, Hello, Instrument, Req, Resp};
