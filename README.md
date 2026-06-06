@@ -64,9 +64,20 @@ flip invoke sys echo msg=hi n=5    # -> {msg: hi, n: 5}
 ```
 
 `sys` is a hardware-free test instrument. The daemon reconnects automatically when the
-Flipper re-enumerates (reboot / relaunch); if a CLI command ever hangs after a reflash,
-an old daemon is holding the previous port — `just daemon-stop` (or `just reflash`) clears
-it.
+Flipper re-enumerates (reboot / relaunch), retrying a few times then idling until the next
+command. It runs quietly — its logs go to a file, not your terminal. Use `flip daemon
+status` (or `just daemon-status`) to check it, and `just daemon-log` to tail its log.
+
+## IR transmit (Slice 1b)
+
+```sh
+flip caps                                              # `ir` now lists `ir.transmit`
+flip ir transmit --file crates/flip-cli/examples/sos.txt
+flip ir transmit --file remote.txt --freq 38000 --duty 330
+```
+
+The timings file is whitespace/newline-separated microsecond durations (mark, space,
+mark, …); `#` lines are comments. IR capture (which produces these files) is Slice 1c.
 
 ## Development
 

@@ -1,0 +1,4 @@
+# A visible/measurable IR test pattern (microseconds): mark, space, mark, ...
+# Not a real protocol — six 100ms on/off pulses. Point the Flipper's IR LED at a
+# phone camera while transmitting to see the LED blink.
+100000 100000 100000 100000 100000 100000
