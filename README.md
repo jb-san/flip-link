@@ -99,6 +99,17 @@ flip subghz capture --freq 433920000 --preset ook650 --idle-gap 500 --output rem
 flip subghz transmit --file remote.subghz
 ```
 
+For byte-worker diagnostics with one Flipper, use `link-probe`:
+
+```sh
+flip subghz link-probe --freq 433920000 --data hello
+flip subghz link-probe --freq 433920000 --hex 0x68656c6c6f --timeout 250
+```
+
+This only proves the FAP can start the SDK Sub-GHz byte worker and write a small
+payload without destabilizing the device. End-to-end byte transfer requires a
+second Flipper running a receive command in a later slice.
+
 `--freq` is in Hz. The firmware validates frequencies through the Flipper Sub-GHz
 device layer and refuses transmit when the device/region does not allow it. There is
 no default RF frequency.
