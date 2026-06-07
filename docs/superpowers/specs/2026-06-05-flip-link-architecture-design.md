@@ -186,7 +186,7 @@ Mirrors the proven C structure, in Rust:
 ```
 flip status                          # daemon + device + caps summary
 flip caps                            # instruments/opcodes (from cached CAPS)
-flip ir capture [--auto-end] > f     # stream raw timings to stdout
+flip ir capture [--idle-gap ms] > f  # stream raw timings to stdout
 flip ir transmit --file f
 flip i2c scan                        # (Slice 2)
 flip i2c read  --addr 0x.. --reg 0x.. --len N

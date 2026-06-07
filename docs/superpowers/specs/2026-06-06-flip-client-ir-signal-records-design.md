@@ -67,12 +67,12 @@ pub fn status() -> DaemonStatus;                       // running? device connec
 pub fn caps(timeout) -> Result<Caps>;
 pub fn invoke(instrument, opcode, params: Value, timeout) -> Result<Resp>;
 pub fn ir_transmit(signal: &IrSignal, timeout) -> Result<u64>;   // -> edges sent
-pub fn ir_capture(auto_end: Option<Duration>, cancel: &dyn Fn() -> bool)
+pub fn ir_capture(idle_gap: Option<Duration>, cancel: &dyn Fn() -> bool)
         -> Result<IrSignal>;                           // streams, trims, returns signal
 ```
 
 `ir_capture` runs the capture stream (the existing `StreamConn` + STREAM_DATA
-decode), accumulates timings, ends on `cancel()` or an `auto_end` silence gap, sends
+decode), accumulates timings, ends on `cancel()` or an `idle_gap` silence gap, sends
 `STREAM_STOP`, drains the final frames, and returns a trimmed `IrSignal`.
 `ir_transmit` builds the REQ params from the signal's `frequency`/`duty_permille`/
 `timings` and invokes `ir.transmit`.
@@ -115,12 +115,13 @@ The carrier defaulting to 38000 documents the assumption and is the value the
 Flipper's own receiver is tuned to; to reach a non-38 kHz target the user edits the
 header or passes `--freq` (which overrides before `ir_transmit`).
 
-## 5. CLI (thin frontend; UX unchanged)
+## 5. CLI (thin frontend)
 
-- `flip ir capture [--auto-end <ms>] [--output <file>]`: install a Ctrl-C flag, call
-  `flip_client::ir_capture(auto_end, &|| flag.load())`, then `signal.write_file` (or
-  print `to_file_string` to stdout). Reports `captured N timings -> <file>` and any
-  `dropped` warning.
+- `flip ir capture [--idle-gap <ms>] [--duration <ms>] [--output <file>]`: install a
+  Ctrl-C flag. `--idle-gap` is passed to `flip_client::ir_capture` as post-data silence
+  detection; `--duration` is a wall-clock cancel condition layered in the CLI. Then
+  write `signal.write_file` (or print `to_file_string` to stdout). Reports
+  `captured N timings -> <file>` and any `dropped` warning.
 - `flip ir transmit --file <f> [--freq <Hz>] [--duty <permille>]`: `IrSignal::read_file`,
   apply `--freq`/`--duty` overrides if present, `flip_client::ir_transmit`.
 - `flip caps` / `flip invoke` / `flip status` / `flip daemon status`: delegate to the

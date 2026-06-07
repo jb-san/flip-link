@@ -30,6 +30,7 @@ const AGENT_IF: u8 = 1;
 const RX_STREAM_CAP: usize = 1024;
 const CHUNK: usize = 64;
 const ENC_CAP: usize = 1100;
+const CDC_TX_TIMEOUT_MS: u32 = 500;
 /// ~5 min of idle 20ms receive timeouts, then restore USB and exit.
 const MAX_IDLE: u32 = 15_000;
 /// Largest accepted inbound frame (header+payload+crc). Guards the heap
@@ -38,6 +39,10 @@ const MAX_FRAME: usize = 16 * 1024;
 
 /// RX stream buffer handle, shared from the USB ISR callback to the main loop.
 static RX_STREAM: AtomicPtr<sys::FuriStreamBuffer> = AtomicPtr::new(core::ptr::null_mut());
+/// Set by the CDC RX callback if the stream buffer drops inbound bytes.
+static RX_OVERFLOWED: AtomicBool = AtomicBool::new(false);
+/// One CDC TX credit, released by the TX-complete callback.
+static TX_SEM: AtomicPtr<sys::FuriSemaphore> = AtomicPtr::new(core::ptr::null_mut());
 /// Cleared by the GUI input callback (Back press) to end the main loop.
 static RUNNING: AtomicBool = AtomicBool::new(true);
 
@@ -52,12 +57,23 @@ unsafe extern "C" fn rx_callback(_ctx: *mut c_void) {
     let mut buf = [0u8; CHUNK];
     let n = unsafe { sys::furi_hal_cdc_receive(AGENT_IF, buf.as_mut_ptr(), CHUNK as u16) };
     if n > 0 {
-        unsafe { sys::furi_stream_buffer_send(sb, buf.as_ptr() as *const c_void, n as usize, 0) };
+        let sent = unsafe {
+            sys::furi_stream_buffer_send(sb, buf.as_ptr() as *const c_void, n as usize, 0)
+        };
+        if sent != n as usize {
+            RX_OVERFLOWED.store(true, Ordering::Release);
+        }
     }
 }
 
-/// USB ISR: TX endpoint complete. Small frames need no flow control; no-op.
-unsafe extern "C" fn tx_callback(_ctx: *mut c_void) {}
+/// USB ISR: TX endpoint complete. Release the single transmit credit so the
+/// main loop never queues another CDC packet before the endpoint is ready.
+unsafe extern "C" fn tx_callback(_ctx: *mut c_void) {
+    let sem = TX_SEM.load(Ordering::Acquire);
+    if !sem.is_null() {
+        unsafe { sys::furi_semaphore_release(sem) };
+    }
+}
 
 /// CDC callbacks registered for interface 1 BEFORE switching to dual-CDC, so the
 /// USB ISR always has valid pointers to call on enumeration/data. Leaving these
@@ -98,10 +114,19 @@ unsafe extern "C" fn input_callback(event: *mut sys::InputEvent, _ctx: *mut c_vo
 
 /// Send all bytes on the agent CDC interface in endpoint-sized chunks.
 fn cdc_send_all(bytes: &[u8]) {
+    let tx_sem = TX_SEM.load(Ordering::Acquire);
     let mut off = 0;
     while off < bytes.len() {
         let end = core::cmp::min(off + CHUNK, bytes.len());
         let chunk = &bytes[off..end];
+        if !tx_sem.is_null() {
+            let status = unsafe {
+                sys::furi_semaphore_acquire(tx_sem, sys::furi_ms_to_ticks(CDC_TX_TIMEOUT_MS))
+            };
+            if status != sys::FuriStatusOk {
+                return;
+            }
+        }
         unsafe { sys::furi_hal_cdc_send(AGENT_IF, chunk.as_ptr() as *mut u8, chunk.len() as u16) };
         off = end;
     }
@@ -210,6 +235,8 @@ fn main(_args: Option<&CStr>) -> i32 {
     // callback firing during the config switch always sees a valid buffer.
     let rx_stream = unsafe { sys::furi_stream_buffer_alloc(RX_STREAM_CAP, 1) };
     RX_STREAM.store(rx_stream, Ordering::Release);
+    let tx_sem = unsafe { sys::furi_semaphore_alloc(1, 1) };
+    TX_SEM.store(tx_sem, Ordering::Release);
 
     // Register CDC callbacks for interface 1 BEFORE switching config, then unlock
     // and switch to dual-CDC. Verify the switch; if it failed, tear down cleanly.
@@ -225,6 +252,7 @@ fn main(_args: Option<&CStr>) -> i32 {
     };
     if !switched {
         usb_teardown(prev, rx_stream);
+        tx_teardown(tx_sem);
         gui_teardown(gui, view_port);
         return -1;
     }
@@ -244,6 +272,24 @@ fn main(_args: Option<&CStr>) -> i32 {
                 recv_timeout,
             )
         };
+        if RX_OVERFLOWED.swap(false, Ordering::AcqRel) {
+            acc.clear();
+            loop {
+                let drained = unsafe {
+                    sys::furi_stream_buffer_receive(
+                        rx_stream,
+                        chunk.as_mut_ptr() as *mut c_void,
+                        CHUNK,
+                        0,
+                    )
+                };
+                if drained == 0 {
+                    break;
+                }
+            }
+            idle = 0;
+            continue;
+        }
         // Stream captured IR samples out every iteration while a capture is
         // active (samples arrive via the IR ISR independently of USB activity),
         // and don't let the idle timeout fire mid-capture.
@@ -303,6 +349,7 @@ fn main(_args: Option<&CStr>) -> i32 {
     ir_instrument::stop_capture(send_stream_data, send_stream_stop);
 
     usb_teardown(prev, rx_stream);
+    tx_teardown(tx_sem);
     gui_teardown(gui, view_port);
     0
 }
@@ -317,6 +364,14 @@ fn usb_teardown(prev: *mut sys::FuriHalUsbInterface, rx_stream: *mut sys::FuriSt
     }
     RX_STREAM.store(core::ptr::null_mut(), Ordering::Release);
     unsafe { sys::furi_stream_buffer_free(rx_stream) };
+}
+
+/// Clear and free the CDC TX semaphore after CDC callbacks have been removed.
+fn tx_teardown(tx_sem: *mut sys::FuriSemaphore) {
+    TX_SEM.store(core::ptr::null_mut(), Ordering::Release);
+    if !tx_sem.is_null() {
+        unsafe { sys::furi_semaphore_free(tx_sem) };
+    }
 }
 
 /// Remove and free the viewport, and close the GUI record.

@@ -7,7 +7,7 @@ use flip_proto::Value;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Parser)]
 #[command(name = "flip", about = "flip-link CLI")]
@@ -61,15 +61,18 @@ enum IrCmd {
         #[arg(long)]
         duty: Option<u32>,
     },
-    /// Capture an IR signal record to a file (or stdout). Stops on Ctrl-C, or
-    /// after a silence gap with --auto-end.
+    /// Capture an IR signal record to a file (or stdout). Stops on Ctrl-C, an
+    /// optional fixed duration, or an optional post-data silence gap.
     Capture {
         /// Write signal record here (default: stdout).
         #[arg(long)]
         output: Option<String>,
-        /// Auto-stop after this many ms of silence (default: run until Ctrl-C).
+        /// Stop after this many ms of silence once IR data has been seen.
         #[arg(long)]
-        auto_end: Option<u64>,
+        idle_gap: Option<u64>,
+        /// Stop after this many ms of wall-clock capture time.
+        #[arg(long)]
+        duration: Option<u64>,
     },
 }
 
@@ -131,7 +134,11 @@ fn main() -> Result<()> {
                 println!("transmitted {count} edges: {sent}");
                 Ok(())
             }
-            IrCmd::Capture { output, auto_end } => run_capture(auto_end, output.as_deref()),
+            IrCmd::Capture {
+                output,
+                idle_gap,
+                duration,
+            } => run_capture(idle_gap, duration, output.as_deref()),
         },
     }
 }
@@ -154,7 +161,11 @@ fn print_daemon_status(status: DaemonStatus) {
     println!("log:    {}", status.log_path.display());
 }
 
-fn run_capture(auto_end_ms: Option<u64>, output: Option<&str>) -> Result<()> {
+fn run_capture(
+    idle_gap_ms: Option<u64>,
+    duration_ms: Option<u64>,
+    output: Option<&str>,
+) -> Result<()> {
     let stop = Arc::new(AtomicBool::new(false));
     {
         let stop = stop.clone();
@@ -162,8 +173,15 @@ fn run_capture(auto_end_ms: Option<u64>, output: Option<&str>) -> Result<()> {
     }
 
     eprintln!("capturing... (Ctrl-C to stop)");
-    let auto_end = auto_end_ms.map(Duration::from_millis);
-    let signal = flip_client::ir_capture(auto_end, &|| stop.load(Ordering::SeqCst))?;
+    let idle_gap = idle_gap_ms.map(Duration::from_millis);
+    let duration = duration_ms.map(Duration::from_millis);
+    let started = Instant::now();
+    let signal = flip_client::ir_capture(idle_gap, &|| {
+        stop.load(Ordering::SeqCst)
+            || duration
+                .map(|duration| started.elapsed() >= duration)
+                .unwrap_or(false)
+    })?;
 
     match output {
         Some(path) => {
@@ -205,5 +223,52 @@ fn render_value(value: &Value) -> String {
                 .join(", ");
             format!("{{{inner}}}")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ir_capture_accepts_idle_gap_and_duration() {
+        let cli = Cli::try_parse_from([
+            "flip",
+            "ir",
+            "capture",
+            "--idle-gap",
+            "800",
+            "--duration",
+            "5000",
+            "--output",
+            "/tmp/raw.ir",
+        ])
+        .unwrap();
+
+        let Cmd::Ir {
+            cmd:
+                IrCmd::Capture {
+                    output,
+                    idle_gap,
+                    duration,
+                },
+        } = cli.cmd
+        else {
+            panic!("expected ir capture command");
+        };
+
+        assert_eq!(output.as_deref(), Some("/tmp/raw.ir"));
+        assert_eq!(idle_gap, Some(800));
+        assert_eq!(duration, Some(5000));
+    }
+
+    #[test]
+    fn ir_capture_rejects_removed_auto_end_flag() {
+        let err = match Cli::try_parse_from(["flip", "ir", "capture", "--auto-end", "800"]) {
+            Ok(_) => panic!("--auto-end should no longer parse"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
     }
 }

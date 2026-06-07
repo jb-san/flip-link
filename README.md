@@ -75,12 +75,13 @@ Capture a remote, then replay it — the round-trip:
 
 ```sh
 flip caps                                            # `ir` lists `ir.transmit` + `ir.capture`
-flip ir capture --auto-end 400 --output remote.txt   # press a remote button at the Flipper
+flip ir capture --idle-gap 400 --output remote.txt   # press a remote button at the Flipper
 flip ir transmit --file remote.txt                   # replay at the target device
 ```
 
-`ir capture` streams raw timings until **Ctrl-C**, or `--auto-end <ms>` of silence (good for
-one button press). The saved output is a full IR signal record, not just bare timings:
+`ir capture` streams raw timings until **Ctrl-C** by default. Use `--idle-gap <ms>` to stop
+after post-data silence (good for one button press), or `--duration <ms>` for a fixed
+wall-clock capture window. The saved output is a full IR signal record, not just bare timings:
 `# freq=<Hz>` and `# duty=<permille>` directive lines followed by µs timings.
 `--output` writes a file (default: stdout), and `ir transmit --file` consumes the record so
 capture→transmit round-trips. Old whitespace timing files with normal `#` comments still

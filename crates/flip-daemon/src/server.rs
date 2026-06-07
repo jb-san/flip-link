@@ -10,6 +10,8 @@ use std::sync::mpsc::{channel, Sender};
 use std::sync::Arc;
 use std::time::Duration;
 
+const STREAM_STOP_ACK_TIMEOUT: Duration = Duration::from_secs(3);
+
 /// Daemon socket path: $XDG_RUNTIME_DIR/flip-link.sock, else /tmp/flip-link.sock.
 pub fn socket_path() -> PathBuf {
     if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
@@ -156,6 +158,26 @@ fn relay_stream(
     client_seq: u16,
     dev_seq: u16,
 ) -> Result<()> {
+    relay_stream_with_stop_timeout(
+        stream,
+        reply_rx,
+        router,
+        outbound,
+        client_seq,
+        dev_seq,
+        STREAM_STOP_ACK_TIMEOUT,
+    )
+}
+
+fn relay_stream_with_stop_timeout(
+    stream: &mut UnixStream,
+    reply_rx: &std::sync::mpsc::Receiver<OwnedFrame>,
+    router: &Router,
+    outbound: &Sender<Vec<u8>>,
+    client_seq: u16,
+    dev_seq: u16,
+    stop_timeout: Duration,
+) -> Result<()> {
     let mut scratch = [0u8; 1024];
     let mut reader = FrameReader::new();
     // Set once the client asks to stop: bound how long we wait for the device's
@@ -165,6 +187,11 @@ fn relay_stream(
     loop {
         if let Some(deadline) = stop_deadline {
             if std::time::Instant::now() >= deadline {
+                let body = flip_proto::messages::to_payload(&flip_proto::AgentError {
+                    code: flip_proto::messages::ERR_INTERNAL,
+                    message: "device timeout waiting for stream stop".into(),
+                });
+                write_frame(stream, MsgType::Error, client_seq, &body)?;
                 router.unregister(dev_seq);
                 return Ok(());
             }
@@ -182,9 +209,8 @@ fn relay_stream(
                 while let Some(f) = reader.next_frame() {
                     if f.typ == MsgType::StreamStop {
                         forward(outbound, MsgType::StreamStop, 0, dev_seq, &[]);
-                        stop_deadline.get_or_insert_with(|| {
-                            std::time::Instant::now() + Duration::from_secs(3)
-                        });
+                        stop_deadline
+                            .get_or_insert_with(|| std::time::Instant::now() + stop_timeout);
                     }
                 }
             }
@@ -212,5 +238,59 @@ fn relay_stream(
                 return Ok(());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use flip_core::transport::FrameReader;
+    use std::sync::mpsc::channel;
+
+    #[test]
+    fn relay_stream_reports_timeout_when_device_never_confirms_stop() {
+        let (mut client, mut daemon) = UnixStream::pair().unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        daemon
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .unwrap();
+
+        write_frame(&mut client, MsgType::StreamStop, 1, &[]).unwrap();
+
+        let router = Router::new();
+        let (_reply_tx, reply_rx) = channel::<OwnedFrame>();
+        let (outbound_tx, outbound_rx) = channel::<Vec<u8>>();
+
+        relay_stream_with_stop_timeout(
+            &mut daemon,
+            &reply_rx,
+            &router,
+            &outbound_tx,
+            1,
+            42,
+            Duration::from_millis(20),
+        )
+        .unwrap();
+
+        let forwarded = outbound_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        let mut forwarded_reader = FrameReader::new();
+        forwarded_reader.feed(&forwarded);
+        let forwarded_stop = forwarded_reader.next_frame().unwrap();
+        assert_eq!(forwarded_stop.typ, MsgType::StreamStop);
+        assert_eq!(forwarded_stop.seq, 42);
+
+        let mut buf = [0u8; 256];
+        let n = client.read(&mut buf).unwrap();
+        let mut reader = FrameReader::new();
+        reader.feed(&buf[..n]);
+        let timeout = reader.next_frame().unwrap();
+        assert_eq!(timeout.typ, MsgType::Error);
+        assert_eq!(timeout.seq, 1);
+        let error: flip_proto::AgentError =
+            flip_proto::messages::from_payload(&timeout.payload).unwrap();
+        assert_eq!(error.code, flip_proto::messages::ERR_INTERNAL);
+        assert_eq!(error.message, "device timeout waiting for stream stop");
     }
 }

@@ -16,6 +16,10 @@ use std::time::Duration;
 
 /// Connect attempts before going idle (then we wait for a client poke).
 const MAX_RETRIES: u32 = 5;
+/// Match the Flipper CDC endpoint size and pace large frames so the FAP can
+/// drain its small ISR-to-main-loop RX stream buffer.
+const OUTBOUND_WRITE_CHUNK: usize = 64;
+const OUTBOUND_WRITE_PAUSE: Duration = Duration::from_millis(2);
 
 /// Run the device owner forever. `outbound` carries already-framed bytes from
 /// clients; `wake` is pinged by a client thread whenever a command arrives.
@@ -76,7 +80,9 @@ fn pump(mut device: SerialTransport, router: &Router, outbound: &Receiver<Vec<u8
     let mut scratch = [0u8; 1024];
     loop {
         while let Ok(bytes) = outbound.try_recv() {
-            device.write_all(&bytes)?;
+            write_outbound_frame(&mut device, &bytes, || {
+                std::thread::sleep(OUTBOUND_WRITE_PAUSE)
+            })?;
         }
         let got = device.read(&mut scratch)?;
         if got > 0 {
@@ -88,6 +94,20 @@ fn pump(mut device: SerialTransport, router: &Router, outbound: &Receiver<Vec<u8
             std::thread::sleep(Duration::from_millis(2));
         }
     }
+}
+
+fn write_outbound_frame(
+    device: &mut impl Transport,
+    bytes: &[u8],
+    mut pause_between_chunks: impl FnMut(),
+) -> Result<()> {
+    for (index, chunk) in bytes.chunks(OUTBOUND_WRITE_CHUNK).enumerate() {
+        if index > 0 {
+            pause_between_chunks();
+        }
+        device.write_all(chunk)?;
+    }
+    Ok(())
 }
 
 /// Send HELLO and wait for CAPS, caching its payload. Times out after 2s.
@@ -118,5 +138,43 @@ fn cache_caps(router: &Router, device: &mut SerialTransport) -> Result<()> {
         } else {
             std::thread::sleep(Duration::from_millis(2));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use flip_core::transport::Transport;
+
+    #[derive(Default)]
+    struct MockTransport {
+        writes: Vec<Vec<u8>>,
+    }
+
+    impl Transport for MockTransport {
+        fn write_all(&mut self, buf: &[u8]) -> Result<()> {
+            self.writes.push(buf.to_vec());
+            Ok(())
+        }
+
+        fn read(&mut self, _buf: &mut [u8]) -> Result<usize> {
+            Ok(0)
+        }
+    }
+
+    #[test]
+    fn outbound_frames_are_written_in_cdc_sized_chunks() {
+        let bytes: Vec<u8> = (0..150).map(|n| n as u8).collect();
+        let mut transport = MockTransport::default();
+        let mut pauses = 0;
+
+        write_outbound_frame(&mut transport, &bytes, || pauses += 1).unwrap();
+
+        assert_eq!(
+            transport.writes.iter().map(Vec::len).collect::<Vec<_>>(),
+            vec![64, 64, 22]
+        );
+        assert_eq!(transport.writes.concat(), bytes);
+        assert_eq!(pauses, 2);
     }
 }

@@ -40,7 +40,7 @@ pub fn ir_transmit(signal: &IrSignal, timeout: Duration) -> Result<u64> {
     sent_count(&resp.result)
 }
 
-pub fn ir_capture(auto_end: Option<Duration>, cancel: &dyn Fn() -> bool) -> Result<IrSignal> {
+pub fn ir_capture(idle_gap: Option<Duration>, cancel: &dyn Fn() -> bool) -> Result<IrSignal> {
     let mut conn = daemon::open_stream("ir", "capture", Value::Null)?;
     expect_capture_stream_start(&mut conn)?;
     let mut raw = Vec::new();
@@ -70,7 +70,7 @@ pub fn ir_capture(auto_end: Option<Duration>, cancel: &dyn Fn() -> bool) -> Resu
             None => {}
         }
 
-        if let Some(gap) = auto_end {
+        if let Some(gap) = idle_gap {
             if !raw.is_empty() && last_data.elapsed() >= gap {
                 break;
             }
