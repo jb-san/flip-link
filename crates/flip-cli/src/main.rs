@@ -2,21 +2,23 @@ mod kv;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use flip_client::{DaemonStatus, DeviceStatus, IrSignal, SubGhzPreset, SubGhzSignal};
+use flip_client::{
+    subghz::parse_probe_hex, DaemonStatus, DeviceStatus, IrSignal, SubGhzPreset, SubGhzSignal,
+};
 use flip_proto::Value;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-#[derive(Parser)]
+#[derive(Debug, Parser)]
 #[command(name = "flip", about = "flip-link CLI")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
 }
 
-#[derive(Subcommand)]
+#[derive(Debug, Subcommand)]
 enum Cmd {
     /// Show daemon + device status (does a PING round-trip).
     Status,
@@ -47,13 +49,13 @@ enum Cmd {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Debug, Subcommand)]
 enum DaemonCmd {
     /// Report whether the daemon is running and the device connected.
     Status,
 }
 
-#[derive(Subcommand)]
+#[derive(Debug, Subcommand)]
 enum IrCmd {
     /// Transmit an IR signal record from a file.
     Transmit {
@@ -82,7 +84,7 @@ enum IrCmd {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Debug, Subcommand)]
 enum SubGhzCmd {
     /// Capture a raw Sub-GHz level/duration record.
     Capture {
@@ -116,6 +118,21 @@ enum SubGhzCmd {
         /// Repeat count.
         #[arg(long, default_value_t = 1)]
         repeat: u32,
+    },
+    /// Probe the SDK Sub-GHz byte worker with a small payload.
+    LinkProbe {
+        /// Frequency in Hz. Required; there is no default RF frequency.
+        #[arg(long)]
+        freq: u32,
+        /// UTF-8 text payload to write.
+        #[arg(long, conflicts_with = "hex", required_unless_present = "hex")]
+        data: Option<String>,
+        /// Hex payload to write, for example 0x68656c6c6f.
+        #[arg(long, conflicts_with = "data")]
+        hex: Option<String>,
+        /// Firmware wait after writing, in ms.
+        #[arg(long, default_value_t = 500)]
+        timeout: u64,
     },
 }
 
@@ -207,6 +224,28 @@ fn main() -> Result<()> {
                 let count = signal.edges.len();
                 let sent = flip_client::subghz_transmit(&signal, repeat, Duration::from_secs(30))?;
                 println!("transmitted {count} Sub-GHz edges: {sent}");
+                Ok(())
+            }
+            SubGhzCmd::LinkProbe {
+                freq,
+                data,
+                hex,
+                timeout,
+            } => {
+                let payload = match (data, hex) {
+                    (Some(data), None) => data.into_bytes(),
+                    (None, Some(hex)) => parse_probe_hex(&hex)?,
+                    _ => unreachable!("clap enforces exactly one payload source"),
+                };
+                let result =
+                    flip_client::subghz_link_probe(freq, &payload, Duration::from_millis(timeout))?;
+                println!(
+                    "link probe wrote {} bytes; read {} bytes; callbacks {}",
+                    result.written, result.read, result.callbacks
+                );
+                if !result.rx_preview.is_empty() {
+                    println!("rx preview: {}", hex_preview(&result.rx_preview));
+                }
                 Ok(())
             }
         },
@@ -331,6 +370,13 @@ fn render_value(value: &Value) -> String {
     }
 }
 
+fn hex_preview(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -436,5 +482,63 @@ mod tests {
 
         assert_eq!(file, "/tmp/button.subghz");
         assert_eq!(repeat, 2);
+    }
+
+    #[test]
+    fn subghz_link_probe_accepts_data_payload() {
+        let cli = Cli::try_parse_from([
+            "flip",
+            "subghz",
+            "link-probe",
+            "--freq",
+            "433920000",
+            "--data",
+            "hello",
+            "--timeout",
+            "250",
+        ])
+        .unwrap();
+
+        let Cmd::SubGhz {
+            cmd:
+                SubGhzCmd::LinkProbe {
+                    freq,
+                    data,
+                    hex,
+                    timeout,
+                },
+        } = cli.cmd
+        else {
+            panic!("expected subghz link-probe");
+        };
+
+        assert_eq!(freq, 433_920_000);
+        assert_eq!(data.as_deref(), Some("hello"));
+        assert_eq!(hex, None);
+        assert_eq!(timeout, 250);
+    }
+
+    #[test]
+    fn subghz_link_probe_requires_one_payload_source() {
+        let missing = Cli::try_parse_from(["flip", "subghz", "link-probe", "--freq", "433920000"])
+            .unwrap_err();
+        assert_eq!(
+            missing.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+
+        let conflict = Cli::try_parse_from([
+            "flip",
+            "subghz",
+            "link-probe",
+            "--freq",
+            "433920000",
+            "--data",
+            "hello",
+            "--hex",
+            "6869",
+        ])
+        .unwrap_err();
+        assert_eq!(conflict.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 }

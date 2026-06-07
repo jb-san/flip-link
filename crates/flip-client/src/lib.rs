@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 pub use daemon::{connect, log_path, open_stream, ping_through_daemon, try_connect, StreamConn};
 pub use signal::IrSignal;
-pub use subghz::{SubGhzEdge, SubGhzPreset, SubGhzSignal};
+pub use subghz::{SubGhzEdge, SubGhzLinkProbeResult, SubGhzPreset, SubGhzSignal};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DeviceStatus {
@@ -99,6 +99,19 @@ pub fn subghz_transmit(signal: &SubGhzSignal, repeat: u32, timeout: Duration) ->
         timeout,
     )?;
     sent_count(&resp.result)
+}
+
+pub fn subghz_link_probe(
+    frequency: u32,
+    payload: &[u8],
+    timeout: Duration,
+) -> Result<SubGhzLinkProbeResult> {
+    let params = subghz::link_probe_params(frequency, payload, timeout)?;
+    let host_timeout = timeout
+        .checked_add(Duration::from_secs(3))
+        .unwrap_or(Duration::from_secs(8));
+    let resp = invoke("subghz", "link_probe", params, host_timeout)?;
+    subghz::link_probe_result(&resp.result)
 }
 
 pub fn subghz_capture(
@@ -347,6 +360,18 @@ mod tests {
             "sent".to_string(),
             Value::Text("4".into())
         )]))
+        .is_err());
+    }
+
+    #[test]
+    fn link_probe_result_rejects_wrong_shape() {
+        assert!(subghz::link_probe_result(&Value::Null).is_err());
+        assert!(subghz::link_probe_result(&Value::Map(vec![
+            ("written".into(), Value::U64(1)),
+            ("read".into(), Value::U64(0)),
+            ("callbacks".into(), Value::U64(0)),
+            ("rx_preview".into(), Value::Text("not bytes".into())),
+        ]))
         .is_err());
     }
 
