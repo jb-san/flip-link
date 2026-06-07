@@ -18,9 +18,10 @@ use flipperzero_rt::{entry, manifest};
 use flipperzero_sys as sys;
 
 manifest!(
-    name = "flip-link",
+    name = "FlipLink",
     app_version = 1,
-    has_icon = false,
+    has_icon = true,
+    icon = "../icons/fliplink-10x10.icon",
     stack_size = 8192,
 );
 
@@ -94,7 +95,7 @@ unsafe extern "C" fn draw_callback(canvas: *mut sys::Canvas, _ctx: *mut c_void) 
     unsafe {
         sys::canvas_clear(canvas);
         sys::canvas_set_font(canvas, sys::FontPrimary);
-        sys::canvas_draw_str(canvas, 2, 14, c"flip-link".as_ptr());
+        sys::canvas_draw_str(canvas, 2, 14, c"FlipLink".as_ptr());
         sys::canvas_set_font(canvas, sys::FontSecondary);
         sys::canvas_draw_str(canvas, 2, 30, c"USB agent running".as_ptr());
         sys::canvas_draw_str(canvas, 2, 42, c"interface 1 ready".as_ptr());
