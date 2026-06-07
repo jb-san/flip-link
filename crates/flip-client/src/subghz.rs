@@ -6,7 +6,9 @@ use std::str::FromStr;
 use std::time::Duration;
 
 pub const MAX_SUBGHZ_DURATION_US: u32 = 0x3fff_ffff;
-pub const MAX_LINK_PROBE_BYTES: usize = 64;
+pub const MAX_LINK_PROBE_BYTES: usize = 60;
+pub const MIN_LINK_PROBE_TIMEOUT_MS: u64 = 100;
+pub const MAX_LINK_PROBE_TIMEOUT_MS: u64 = 5_000;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SubGhzLinkProbeResult {
@@ -209,12 +211,14 @@ pub(crate) fn link_probe_params(
     timeout: Duration,
 ) -> Result<Value> {
     validate_probe_payload(payload)?;
-    if timeout < Duration::from_millis(1)
-        || timeout > Duration::from_millis(5_000)
+    if timeout < Duration::from_millis(MIN_LINK_PROBE_TIMEOUT_MS)
+        || timeout > Duration::from_millis(MAX_LINK_PROBE_TIMEOUT_MS)
         || timeout.subsec_nanos() % 1_000_000 != 0
     {
         return Err(anyhow!(
-            "link probe timeout must be whole milliseconds in 1..=5000 ms"
+            "link probe timeout must be whole milliseconds in {}..={} ms",
+            MIN_LINK_PROBE_TIMEOUT_MS,
+            MAX_LINK_PROBE_TIMEOUT_MS
         ));
     }
     let timeout_ms = timeout.as_millis();
@@ -407,16 +411,24 @@ mod tests {
         assert_eq!(params.get("timeout_ms"), Some(&flip_proto::Value::U64(250)));
 
         assert_eq!(
-            link_probe_params(433_920_000, b"hello", Duration::from_millis(1))
-                .unwrap()
-                .get("timeout_ms"),
-            Some(&flip_proto::Value::U64(1))
+            link_probe_params(
+                433_920_000,
+                b"hello",
+                Duration::from_millis(MIN_LINK_PROBE_TIMEOUT_MS)
+            )
+            .unwrap()
+            .get("timeout_ms"),
+            Some(&flip_proto::Value::U64(MIN_LINK_PROBE_TIMEOUT_MS))
         );
         assert_eq!(
-            link_probe_params(433_920_000, b"hello", Duration::from_millis(5000))
-                .unwrap()
-                .get("timeout_ms"),
-            Some(&flip_proto::Value::U64(5000))
+            link_probe_params(
+                433_920_000,
+                b"hello",
+                Duration::from_millis(MAX_LINK_PROBE_TIMEOUT_MS)
+            )
+            .unwrap()
+            .get("timeout_ms"),
+            Some(&flip_proto::Value::U64(MAX_LINK_PROBE_TIMEOUT_MS))
         );
         assert_eq!(
             link_probe_params(
@@ -431,6 +443,12 @@ mod tests {
 
         assert!(link_probe_params(433_920_000, b"", Duration::from_millis(250)).is_err());
         assert!(link_probe_params(433_920_000, b"hello", Duration::ZERO).is_err());
+        assert!(link_probe_params(
+            433_920_000,
+            b"hello",
+            Duration::from_millis(MIN_LINK_PROBE_TIMEOUT_MS - 1)
+        )
+        .is_err());
         assert!(link_probe_params(433_920_000, b"hello", Duration::from_nanos(1)).is_err());
         assert!(link_probe_params(
             433_920_000,

@@ -108,7 +108,8 @@ flip subghz link-probe --freq 433920000 --hex 0x68656c6c6f --timeout 250
 
 This only proves the FAP can start the SDK Sub-GHz byte worker and write a small
 payload without destabilizing the device. End-to-end byte transfer requires a
-second Flipper running a receive command in a later slice.
+second Flipper running a receive command in a later slice. The diagnostic payload
+is capped at 60 bytes, and `--timeout` must be 100..=5000 ms.
 
 `--freq` is in Hz. The firmware validates frequencies through the Flipper Sub-GHz
 device layer and refuses transmit when the device/region does not allow it. There is

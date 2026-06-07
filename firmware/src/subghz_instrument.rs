@@ -9,7 +9,8 @@ use flipperzero_sys as sys;
 const MAX_EDGES: usize = 4096;
 const CAPTURE_CAP: usize = 8192;
 const EDGE_RECORD_SIZE: usize = 5;
-const MAX_LINK_PROBE_BYTES: usize = 64;
+const MAX_LINK_PROBE_BYTES: usize = 60;
+const MIN_LINK_PROBE_TIMEOUT_MS: u32 = 100;
 const MAX_LINK_PROBE_TIMEOUT_MS: u32 = 5_000;
 const DEFAULT_LINK_PROBE_TIMEOUT_MS: u32 = 500;
 
@@ -165,7 +166,7 @@ fn probe_timeout_ms(params: &Value) -> Result<u32, (u32, String)> {
         .get("timeout_ms")
         .and_then(as_u64)
         .unwrap_or(DEFAULT_LINK_PROBE_TIMEOUT_MS as u64);
-    if timeout == 0 || timeout > MAX_LINK_PROBE_TIMEOUT_MS as u64 {
+    if timeout < MIN_LINK_PROBE_TIMEOUT_MS as u64 || timeout > MAX_LINK_PROBE_TIMEOUT_MS as u64 {
         return Err((ERR_BAD_PARAMS, "timeout_ms out of range".to_string()));
     }
     Ok(timeout as u32)

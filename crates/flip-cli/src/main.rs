@@ -131,7 +131,7 @@ enum SubGhzCmd {
         #[arg(long, conflicts_with = "data")]
         hex: Option<String>,
         /// Firmware wait after writing, in ms.
-        #[arg(long, default_value_t = 500)]
+        #[arg(long, default_value_t = 500, value_parser = clap::value_parser!(u64).range(100..=5000))]
         timeout: u64,
     },
 }
@@ -540,5 +540,19 @@ mod tests {
         ])
         .unwrap_err();
         assert_eq!(conflict.kind(), clap::error::ErrorKind::ArgumentConflict);
+
+        let too_short = Cli::try_parse_from([
+            "flip",
+            "subghz",
+            "link-probe",
+            "--freq",
+            "433920000",
+            "--data",
+            "hello",
+            "--timeout",
+            "1",
+        ])
+        .unwrap_err();
+        assert_eq!(too_short.kind(), clap::error::ErrorKind::ValueValidation);
     }
 }
