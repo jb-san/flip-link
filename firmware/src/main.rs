@@ -7,6 +7,7 @@ extern crate flipperzero_rt;
 
 mod ir_instrument;
 mod registry;
+mod subghz_instrument;
 mod sys_instrument;
 
 use core::ffi::{CStr, c_void};
@@ -195,13 +196,25 @@ fn handle_frame(typ: MsgType, seq: u16, payload: &[u8]) {
         }
         MsgType::Req => match from_payload::<Req>(payload) {
             Ok(req) => {
-                // ir.capture is a streaming op — it starts a STREAM, not a RESP.
-                if req.instrument == "ir" && req.opcode == "capture" {
-                    ir_instrument::start_capture(
-                        seq,
-                        send_stream_start,
-                        |s: u16, c: u32, m: &str| send_error(s, c, m),
-                    );
+                if registry::is_streaming(&req.instrument, &req.opcode) {
+                    match (req.instrument.as_str(), req.opcode.as_str()) {
+                        ("ir", "capture") => ir_instrument::start_capture(
+                            seq,
+                            send_stream_start,
+                            |s: u16, c: u32, m: &str| send_error(s, c, m),
+                        ),
+                        ("subghz", "capture") => subghz_instrument::start_capture(
+                            seq,
+                            &req.params,
+                            send_stream_start,
+                            |s: u16, c: u32, m: &str| send_error(s, c, m),
+                        ),
+                        _ => send_error(
+                            seq,
+                            flip_proto::messages::ERR_UNKNOWN_OPCODE,
+                            "unknown streaming opcode",
+                        ),
+                    }
                 } else {
                     match registry::dispatch(&req.instrument, &req.opcode, &req.params) {
                         Ok(result) => send_msg(MsgType::Resp, seq, &Resp { ok: true, result }),
@@ -214,6 +227,7 @@ fn handle_frame(typ: MsgType, seq: u16, payload: &[u8]) {
         // Client asks to end the active capture.
         MsgType::StreamStop => {
             ir_instrument::stop_capture(send_stream_data, send_stream_stop);
+            subghz_instrument::stop_capture(send_stream_data, send_stream_stop);
         }
         _ => {}
     }
@@ -290,13 +304,18 @@ fn main(_args: Option<&CStr>) -> i32 {
             idle = 0;
             continue;
         }
-        // Stream captured IR samples out every iteration while a capture is
-        // active (samples arrive via the IR ISR independently of USB activity),
+        // Stream captured samples out every iteration while capture is active
+        // (samples arrive via hardware ISRs independently of USB activity),
         // and don't let the idle timeout fire mid-capture.
-        let capturing = ir_instrument::capture_active();
-        if capturing {
+        let ir_capturing = ir_instrument::capture_active();
+        let subghz_capturing = subghz_instrument::capture_active();
+        if ir_capturing {
             ir_instrument::drain_capture(send_stream_data);
         }
+        if subghz_capturing {
+            subghz_instrument::drain_capture(send_stream_data);
+        }
+        let capturing = ir_capturing || subghz_capturing;
         if got == 0 {
             if !capturing {
                 idle += 1;
@@ -347,6 +366,7 @@ fn main(_args: Option<&CStr>) -> i32 {
 
     // If the user pressed Back mid-capture, finish the stream cleanly.
     ir_instrument::stop_capture(send_stream_data, send_stream_stop);
+    subghz_instrument::stop_capture(send_stream_data, send_stream_stop);
 
     usb_teardown(prev, rx_stream);
     tx_teardown(tx_sem);

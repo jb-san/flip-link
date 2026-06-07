@@ -34,6 +34,11 @@ static IR_OPCODES: &[OpcodeEntry] = &[OpcodeEntry {
     handler: crate::ir_instrument::transmit,
 }];
 
+static SUBGHZ_OPCODES: &[OpcodeEntry] = &[OpcodeEntry {
+    opcode: "transmit",
+    handler: crate::subghz_instrument::transmit,
+}];
+
 static INSTRUMENTS: &[InstrumentEntry] = &[
     InstrumentEntry {
         id: "sys",
@@ -43,6 +48,11 @@ static INSTRUMENTS: &[InstrumentEntry] = &[
     InstrumentEntry {
         id: "ir",
         opcodes: IR_OPCODES,
+        streaming_opcodes: &["capture"],
+    },
+    InstrumentEntry {
+        id: "subghz",
+        opcodes: SUBGHZ_OPCODES,
         streaming_opcodes: &["capture"],
     },
 ];
@@ -60,6 +70,15 @@ pub fn find(instrument: &str, opcode: &str) -> Option<sys_instrument::Handler> {
 /// unknown-opcode errors).
 pub fn has_instrument(instrument: &str) -> bool {
     INSTRUMENTS.iter().any(|i| i.id == instrument)
+}
+
+/// True if the instrument/opcode is advertised as a streaming operation.
+pub fn is_streaming(instrument: &str, opcode: &str) -> bool {
+    INSTRUMENTS
+        .iter()
+        .find(|i| i.id == instrument)
+        .map(|i| i.streaming_opcodes.iter().any(|s| *s == opcode))
+        .unwrap_or(false)
 }
 
 /// Build the CAPS body from the static table.

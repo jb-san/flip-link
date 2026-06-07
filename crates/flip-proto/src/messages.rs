@@ -82,6 +82,9 @@ pub struct StreamStop {
 /// The raw-sample format IR capture uses: little-endian i32 microsecond durations.
 pub const STREAM_FORMAT_RAW_I32_US: &str = "raw_int32_le_us";
 
+/// Raw Sub-GHz level/duration samples: 1 byte level + u32 little-endian duration_us.
+pub const STREAM_FORMAT_SUBGHZ_LEVEL_DURATION_V1: &str = "subghz_level_duration_le_v1";
+
 /// Encode any control body to a `Vec<u8>` (the frame payload).
 pub fn to_payload<T: minicbor::Encode<()>>(msg: &T) -> Vec<u8> {
     let mut buf = Vec::new();
@@ -124,6 +127,10 @@ mod tests {
         assert_eq!(from_payload::<StreamStart>(&to_payload(&s)).unwrap(), s);
         let p = StreamStop { dropped: 3 };
         assert_eq!(from_payload::<StreamStop>(&to_payload(&p)).unwrap(), p);
+        assert_eq!(
+            STREAM_FORMAT_SUBGHZ_LEVEL_DURATION_V1,
+            "subghz_level_duration_le_v1"
+        );
     }
 
     #[test]

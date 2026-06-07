@@ -89,6 +89,26 @@ work; without directive lines they default to 38000 Hz / 330 permille. The
 `flip ir transmit --freq` and `--duty` flags are optional overrides for the file/header
 values.
 
+## Sub-GHz raw capture & transmit
+
+Sub-GHz requires an explicit frequency and radio preset:
+
+```sh
+flip caps                                                          # `subghz` lists capture/transmit
+flip subghz capture --freq 433920000 --preset ook650 --idle-gap 500 --output remote.subghz
+flip subghz transmit --file remote.subghz
+```
+
+`--freq` is in Hz. The firmware validates frequencies through the Flipper Sub-GHz
+device layer and refuses transmit when the device/region does not allow it. There is
+no default RF frequency.
+
+The `--preset` is the CC1101 modulation profile, not the remote protocol. Start with
+`ook650` for many simple remote-like raw captures; use `ook270` for narrower OOK/ASK
+signals, or the FSK/MSK/GFSK presets only when that modulation is known. Raw
+`.subghz` records store `frequency`, `preset`, and level/duration samples. This is
+Layer 1 raw replay, not the later arbitrary byte link.
+
 ## Development
 
 ```sh

@@ -1,5 +1,6 @@
 mod daemon;
 pub mod signal;
+pub mod subghz;
 
 use anyhow::{anyhow, Result};
 use flip_proto::{Caps, MsgType, Resp, Value};
@@ -8,6 +9,7 @@ use std::time::{Duration, Instant};
 
 pub use daemon::{connect, log_path, open_stream, ping_through_daemon, try_connect, StreamConn};
 pub use signal::IrSignal;
+pub use subghz::{SubGhzEdge, SubGhzPreset, SubGhzSignal};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DeviceStatus {
@@ -89,6 +91,79 @@ pub fn ir_capture(idle_gap: Option<Duration>, cancel: &dyn Fn() -> bool) -> Resu
     Ok(signal)
 }
 
+pub fn subghz_transmit(signal: &SubGhzSignal, repeat: u32, timeout: Duration) -> Result<u64> {
+    let resp = invoke(
+        "subghz",
+        "transmit",
+        signal.to_transmit_params(repeat),
+        timeout,
+    )?;
+    sent_count(&resp.result)
+}
+
+pub fn subghz_capture(
+    frequency: u32,
+    preset: SubGhzPreset,
+    idle_gap: Option<Duration>,
+    cancel: &dyn Fn() -> bool,
+) -> Result<SubGhzSignal> {
+    let mut conn = daemon::open_stream(
+        "subghz",
+        "capture",
+        SubGhzSignal::capture_params(frequency, preset),
+    )?;
+    expect_subghz_stream_start(&mut conn)?;
+    let mut edges = Vec::new();
+    let mut last_data = Instant::now();
+    let mut saw_final_stop = false;
+
+    loop {
+        if cancel() {
+            break;
+        }
+        match conn.next_frame(Duration::from_millis(50))? {
+            Some((MsgType::StreamData, payload)) => {
+                let n = subghz::decode_stream_data(&payload, &mut edges);
+                if n > 0 {
+                    last_data = Instant::now();
+                }
+            }
+            Some((MsgType::StreamStop, payload)) => {
+                handle_stream_stop("Sub-GHz", &payload)?;
+                saw_final_stop = true;
+                break;
+            }
+            Some((MsgType::Error, payload)) => return Err(decode_agent_error(&payload)),
+            Some((other, _)) => {
+                return Err(anyhow!(
+                    "unexpected frame during Sub-GHz capture: {other:?}"
+                ))
+            }
+            None => {}
+        }
+
+        if let Some(gap) = idle_gap {
+            if !edges.is_empty() && last_data.elapsed() >= gap {
+                break;
+            }
+        }
+    }
+
+    if !saw_final_stop {
+        conn.send(MsgType::StreamStop, &[])?;
+        drain_subghz_capture_stop(&mut conn, &mut edges)?;
+    }
+
+    if edges.is_empty() {
+        return Err(anyhow!("no Sub-GHz signal captured"));
+    }
+    Ok(SubGhzSignal {
+        frequency,
+        preset,
+        edges,
+    })
+}
+
 fn drain_capture_stop(conn: &mut daemon::StreamConn, raw: &mut Vec<u64>) -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(4);
     loop {
@@ -97,7 +172,7 @@ fn drain_capture_stop(conn: &mut daemon::StreamConn, raw: &mut Vec<u64>) -> Resu
                 signal::decode_stream_data(&payload, raw);
             }
             Some((MsgType::StreamStop, payload)) => {
-                handle_capture_stop(&payload)?;
+                handle_stream_stop("IR", &payload)?;
                 return Ok(());
             }
             Some((MsgType::Error, payload)) => return Err(decode_agent_error(&payload)),
@@ -115,6 +190,35 @@ fn drain_capture_stop(conn: &mut daemon::StreamConn, raw: &mut Vec<u64>) -> Resu
     }
 }
 
+fn drain_subghz_capture_stop(
+    conn: &mut daemon::StreamConn,
+    edges: &mut Vec<SubGhzEdge>,
+) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(4);
+    loop {
+        match conn.next_frame(Duration::from_millis(50))? {
+            Some((MsgType::StreamData, payload)) => {
+                subghz::decode_stream_data(&payload, edges);
+            }
+            Some((MsgType::StreamStop, payload)) => {
+                handle_stream_stop("Sub-GHz", &payload)?;
+                return Ok(());
+            }
+            Some((MsgType::Error, payload)) => return Err(decode_agent_error(&payload)),
+            Some((other, _)) => {
+                return Err(anyhow!(
+                    "unexpected frame while stopping Sub-GHz capture: {other:?}"
+                ));
+            }
+            None => {}
+        }
+
+        if Instant::now() >= deadline {
+            return Err(anyhow!("timed out waiting for Sub-GHz capture stop"));
+        }
+    }
+}
+
 fn expect_capture_stream_start(conn: &mut daemon::StreamConn) -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
@@ -124,6 +228,21 @@ fn expect_capture_stream_start(conn: &mut daemon::StreamConn) -> Result<()> {
 
         if Instant::now() >= deadline {
             return Err(anyhow!("timed out waiting for IR capture stream start"));
+        }
+    }
+}
+
+fn expect_subghz_stream_start(conn: &mut daemon::StreamConn) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if let Some((typ, payload)) = conn.next_frame(Duration::from_millis(50))? {
+            return validate_subghz_stream_start_frame(typ, &payload);
+        }
+
+        if Instant::now() >= deadline {
+            return Err(anyhow!(
+                "timed out waiting for Sub-GHz capture stream start"
+            ));
         }
     }
 }
@@ -147,13 +266,36 @@ fn validate_capture_stream_start_frame(typ: MsgType, payload: &[u8]) -> Result<(
     }
 }
 
+fn validate_subghz_stream_start_frame(typ: MsgType, payload: &[u8]) -> Result<()> {
+    match typ {
+        MsgType::StreamStart => {
+            let start: flip_proto::StreamStart = flip_proto::messages::from_payload(payload)
+                .map_err(|e| anyhow!("decode STREAM_START: {e}"))?;
+            if start.format != flip_proto::messages::STREAM_FORMAT_SUBGHZ_LEVEL_DURATION_V1 {
+                return Err(anyhow!(
+                    "unsupported Sub-GHz capture stream format {} (expected {})",
+                    start.format,
+                    flip_proto::messages::STREAM_FORMAT_SUBGHZ_LEVEL_DURATION_V1
+                ));
+            }
+            Ok(())
+        }
+        MsgType::Error => Err(decode_agent_error(payload)),
+        other => Err(anyhow!("expected STREAM_START, got {other:?}")),
+    }
+}
+
 fn handle_capture_stop(payload: &[u8]) -> Result<()> {
+    handle_stream_stop("IR", payload)
+}
+
+fn handle_stream_stop(label: &str, payload: &[u8]) -> Result<()> {
     let stop: flip_proto::StreamStop = flip_proto::messages::from_payload(payload)
         .map_err(|e| anyhow!("decode STREAM_STOP: {e}"))?;
     if stop.dropped > 0 {
         return Err(anyhow!(
-            "IR capture dropped {} samples (buffer overflow)",
-            stop.dropped
+            "{label} capture dropped {} samples (buffer overflow)",
+            stop.dropped,
         ));
     }
     Ok(())
@@ -176,8 +318,8 @@ fn sent_count(result: &Value) -> Result<u64> {
                 Value::U64(n) => Some(*n),
                 _ => None,
             })
-            .ok_or_else(|| anyhow!("ir.transmit response missing numeric sent field")),
-        _ => Err(anyhow!("ir.transmit response was not a sent count")),
+            .ok_or_else(|| anyhow!("transmit response missing numeric sent field")),
+        _ => Err(anyhow!("transmit response was not a sent count")),
     }
 }
 
@@ -260,5 +402,27 @@ mod tests {
         let err = validate_capture_stream_start_frame(MsgType::Resp, &[]).unwrap_err();
 
         assert_eq!(err.to_string(), "expected STREAM_START, got Resp");
+    }
+
+    #[test]
+    fn subghz_stream_start_accepts_subghz_format() {
+        let payload = flip_proto::messages::to_payload(&flip_proto::StreamStart {
+            format: flip_proto::messages::STREAM_FORMAT_SUBGHZ_LEVEL_DURATION_V1.to_string(),
+        });
+
+        assert!(validate_subghz_stream_start_frame(MsgType::StreamStart, &payload).is_ok());
+    }
+
+    #[test]
+    fn subghz_stream_start_rejects_wrong_format() {
+        let payload = flip_proto::messages::to_payload(&flip_proto::StreamStart {
+            format: flip_proto::messages::STREAM_FORMAT_RAW_I32_US.to_string(),
+        });
+        let err = validate_subghz_stream_start_frame(MsgType::StreamStart, &payload).unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "unsupported Sub-GHz capture stream format raw_int32_le_us (expected subghz_level_duration_le_v1)"
+        );
     }
 }

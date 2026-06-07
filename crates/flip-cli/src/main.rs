@@ -2,7 +2,7 @@ mod kv;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use flip_client::{DaemonStatus, DeviceStatus, IrSignal};
+use flip_client::{DaemonStatus, DeviceStatus, IrSignal, SubGhzPreset, SubGhzSignal};
 use flip_proto::Value;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -39,6 +39,12 @@ enum Cmd {
         #[command(subcommand)]
         cmd: IrCmd,
     },
+    /// Sub-GHz radio commands.
+    #[command(name = "subghz", alias = "sub-ghz")]
+    SubGhz {
+        #[command(subcommand)]
+        cmd: SubGhzCmd,
+    },
 }
 
 #[derive(Subcommand)]
@@ -73,6 +79,43 @@ enum IrCmd {
         /// Stop after this many ms of wall-clock capture time.
         #[arg(long)]
         duration: Option<u64>,
+    },
+}
+
+#[derive(Subcommand)]
+enum SubGhzCmd {
+    /// Capture a raw Sub-GHz level/duration record.
+    Capture {
+        /// Frequency in Hz. Required; there is no default RF frequency.
+        #[arg(long)]
+        freq: u32,
+        /// Radio preset: ook270, ook650, 2fsk_dev238, 2fsk_dev476, msk99_97, gfsk9_99.
+        #[arg(long)]
+        preset: String,
+        /// Write signal record here (default: stdout).
+        #[arg(long)]
+        output: Option<String>,
+        /// Stop after this many ms of silence once Sub-GHz data has been seen.
+        #[arg(long)]
+        idle_gap: Option<u64>,
+        /// Stop after this many ms of wall-clock capture time.
+        #[arg(long)]
+        duration: Option<u64>,
+    },
+    /// Transmit a raw Sub-GHz level/duration record from a file.
+    Transmit {
+        /// Path to a Sub-GHz signal record file.
+        #[arg(long)]
+        file: String,
+        /// Override frequency in Hz from the signal file.
+        #[arg(long)]
+        freq: Option<u32>,
+        /// Override preset from the signal file.
+        #[arg(long)]
+        preset: Option<String>,
+        /// Repeat count.
+        #[arg(long, default_value_t = 1)]
+        repeat: u32,
     },
 }
 
@@ -140,6 +183,33 @@ fn main() -> Result<()> {
                 duration,
             } => run_capture(idle_gap, duration, output.as_deref()),
         },
+        Cmd::SubGhz { cmd } => match cmd {
+            SubGhzCmd::Capture {
+                freq,
+                preset,
+                output,
+                idle_gap,
+                duration,
+            } => run_subghz_capture(freq, &preset, idle_gap, duration, output.as_deref()),
+            SubGhzCmd::Transmit {
+                file,
+                freq,
+                preset,
+                repeat,
+            } => {
+                let mut signal = SubGhzSignal::read_file(&file)?;
+                if let Some(freq) = freq {
+                    signal.frequency = freq;
+                }
+                if let Some(preset) = preset {
+                    signal.preset = preset.parse::<SubGhzPreset>()?;
+                }
+                let count = signal.edges.len();
+                let sent = flip_client::subghz_transmit(&signal, repeat, Duration::from_secs(30))?;
+                println!("transmitted {count} Sub-GHz edges: {sent}");
+                Ok(())
+            }
+        },
     }
 }
 
@@ -187,6 +257,41 @@ fn run_capture(
         Some(path) => {
             signal.write_file(path)?;
             eprintln!("captured {} timings -> {path}", signal.timings.len());
+        }
+        None => std::io::stdout().write_all(signal.to_file_string().as_bytes())?,
+    }
+    Ok(())
+}
+
+fn run_subghz_capture(
+    freq: u32,
+    preset: &str,
+    idle_gap_ms: Option<u64>,
+    duration_ms: Option<u64>,
+    output: Option<&str>,
+) -> Result<()> {
+    let preset = preset.parse::<SubGhzPreset>()?;
+    let stop = Arc::new(AtomicBool::new(false));
+    {
+        let stop = stop.clone();
+        let _ = ctrlc::set_handler(move || stop.store(true, Ordering::SeqCst));
+    }
+
+    eprintln!("capturing Sub-GHz... (Ctrl-C to stop)");
+    let idle_gap = idle_gap_ms.map(Duration::from_millis);
+    let duration = duration_ms.map(Duration::from_millis);
+    let started = Instant::now();
+    let signal = flip_client::subghz_capture(freq, preset, idle_gap, &|| {
+        stop.load(Ordering::SeqCst)
+            || duration
+                .map(|duration| started.elapsed() >= duration)
+                .unwrap_or(false)
+    })?;
+
+    match output {
+        Some(path) => {
+            signal.write_file(path)?;
+            eprintln!("captured {} Sub-GHz edges -> {path}", signal.edges.len());
         }
         None => std::io::stdout().write_all(signal.to_file_string().as_bytes())?,
     }
@@ -270,5 +375,66 @@ mod tests {
         };
 
         assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
+    }
+
+    #[test]
+    fn subghz_capture_requires_freq_and_accepts_preset() {
+        let cli = Cli::try_parse_from([
+            "flip",
+            "subghz",
+            "capture",
+            "--freq",
+            "433920000",
+            "--preset",
+            "ook650",
+            "--idle-gap",
+            "500",
+            "--output",
+            "/tmp/button.subghz",
+        ])
+        .unwrap();
+
+        let Cmd::SubGhz {
+            cmd:
+                SubGhzCmd::Capture {
+                    freq,
+                    preset,
+                    idle_gap,
+                    output,
+                    ..
+                },
+        } = cli.cmd
+        else {
+            panic!("expected subghz capture");
+        };
+
+        assert_eq!(freq, 433_920_000);
+        assert_eq!(preset, "ook650");
+        assert_eq!(idle_gap, Some(500));
+        assert_eq!(output.as_deref(), Some("/tmp/button.subghz"));
+    }
+
+    #[test]
+    fn subghz_transmit_accepts_repeat() {
+        let cli = Cli::try_parse_from([
+            "flip",
+            "subghz",
+            "transmit",
+            "--file",
+            "/tmp/button.subghz",
+            "--repeat",
+            "2",
+        ])
+        .unwrap();
+
+        let Cmd::SubGhz {
+            cmd: SubGhzCmd::Transmit { file, repeat, .. },
+        } = cli.cmd
+        else {
+            panic!("expected subghz transmit");
+        };
+
+        assert_eq!(file, "/tmp/button.subghz");
+        assert_eq!(repeat, 2);
     }
 }
