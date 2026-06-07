@@ -3,8 +3,18 @@ use flip_proto::Value;
 use std::fmt;
 use std::path::Path;
 use std::str::FromStr;
+use std::time::Duration;
 
 pub const MAX_SUBGHZ_DURATION_US: u32 = 0x3fff_ffff;
+pub const MAX_LINK_PROBE_BYTES: usize = 64;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SubGhzLinkProbeResult {
+    pub written: u64,
+    pub read: u64,
+    pub callbacks: u64,
+    pub rx_preview: Vec<u8>,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SubGhzPreset {
@@ -166,6 +176,95 @@ impl SubGhzSignal {
     }
 }
 
+pub fn parse_probe_hex(input: &str) -> Result<Vec<u8>> {
+    let mut cleaned = String::new();
+    for part in input.split_whitespace() {
+        let part = part.strip_prefix("0x").unwrap_or(part);
+        cleaned.push_str(part);
+    }
+    if !cleaned
+        .as_bytes()
+        .iter()
+        .all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(anyhow!("hex payload contains non-hex digits"));
+    }
+    if cleaned.len() % 2 != 0 {
+        return Err(anyhow!("hex payload must contain an even number of digits"));
+    }
+
+    let mut out = Vec::with_capacity(cleaned.len() / 2);
+    for index in (0..cleaned.len()).step_by(2) {
+        let byte = u8::from_str_radix(&cleaned[index..index + 2], 16)
+            .map_err(|_| anyhow!("invalid hex byte '{}'", &cleaned[index..index + 2]))?;
+        out.push(byte);
+    }
+    validate_probe_payload(&out)?;
+    Ok(out)
+}
+
+pub(crate) fn link_probe_params(
+    frequency: u32,
+    payload: &[u8],
+    timeout: Duration,
+) -> Result<Value> {
+    validate_probe_payload(payload)?;
+    if timeout < Duration::from_millis(1)
+        || timeout > Duration::from_millis(5_000)
+        || timeout.subsec_nanos() % 1_000_000 != 0
+    {
+        return Err(anyhow!(
+            "link probe timeout must be whole milliseconds in 1..=5000 ms"
+        ));
+    }
+    let timeout_ms = timeout.as_millis();
+    Ok(Value::Map(vec![
+        ("frequency".into(), Value::U64(frequency as u64)),
+        ("payload".into(), Value::Bytes(payload.to_vec())),
+        ("timeout_ms".into(), Value::U64(timeout_ms as u64)),
+    ]))
+}
+
+pub(crate) fn link_probe_result(value: &Value) -> Result<SubGhzLinkProbeResult> {
+    Ok(SubGhzLinkProbeResult {
+        written: required_u64(value, "written")?,
+        read: required_u64(value, "read")?,
+        callbacks: required_u64(value, "callbacks")?,
+        rx_preview: match value.get("rx_preview") {
+            Some(Value::Bytes(bytes)) if bytes.len() <= MAX_LINK_PROBE_BYTES => bytes.clone(),
+            Some(Value::Bytes(bytes)) => {
+                return Err(anyhow!(
+                    "link probe response rx_preview too large: {} bytes (max {})",
+                    bytes.len(),
+                    MAX_LINK_PROBE_BYTES
+                ));
+            }
+            _ => return Err(anyhow!("link probe response missing rx_preview bytes")),
+        },
+    })
+}
+
+fn validate_probe_payload(payload: &[u8]) -> Result<()> {
+    if payload.is_empty() {
+        return Err(anyhow!("link probe payload is empty"));
+    }
+    if payload.len() > MAX_LINK_PROBE_BYTES {
+        return Err(anyhow!(
+            "link probe payload too large: {} bytes (max {})",
+            payload.len(),
+            MAX_LINK_PROBE_BYTES
+        ));
+    }
+    Ok(())
+}
+
+fn required_u64(value: &Value, key: &str) -> Result<u64> {
+    match value.get(key) {
+        Some(Value::U64(n)) => Ok(*n),
+        _ => Err(anyhow!("link probe response missing numeric {key} field")),
+    }
+}
+
 fn edge_to_value(edge: &SubGhzEdge) -> Value {
     Value::Map(vec![
         ("level".into(), Value::Bool(edge.level)),
@@ -291,5 +390,136 @@ mod tests {
             Some(&flip_proto::Value::Text("ook650".into()))
         );
         assert_eq!(params.get("repeat"), Some(&flip_proto::Value::U64(3)));
+    }
+
+    #[test]
+    fn link_probe_params_validate_payload_and_timeout() {
+        let params = link_probe_params(433_920_000, b"hello", Duration::from_millis(250)).unwrap();
+
+        assert_eq!(
+            params.get("frequency"),
+            Some(&flip_proto::Value::U64(433_920_000))
+        );
+        assert_eq!(
+            params.get("payload"),
+            Some(&flip_proto::Value::Bytes(b"hello".to_vec()))
+        );
+        assert_eq!(params.get("timeout_ms"), Some(&flip_proto::Value::U64(250)));
+
+        assert_eq!(
+            link_probe_params(433_920_000, b"hello", Duration::from_millis(1))
+                .unwrap()
+                .get("timeout_ms"),
+            Some(&flip_proto::Value::U64(1))
+        );
+        assert_eq!(
+            link_probe_params(433_920_000, b"hello", Duration::from_millis(5000))
+                .unwrap()
+                .get("timeout_ms"),
+            Some(&flip_proto::Value::U64(5000))
+        );
+        assert_eq!(
+            link_probe_params(
+                433_920_000,
+                &[0xaa; MAX_LINK_PROBE_BYTES],
+                Duration::from_millis(250)
+            )
+            .unwrap()
+            .get("payload"),
+            Some(&flip_proto::Value::Bytes(vec![0xaa; MAX_LINK_PROBE_BYTES]))
+        );
+
+        assert!(link_probe_params(433_920_000, b"", Duration::from_millis(250)).is_err());
+        assert!(link_probe_params(433_920_000, b"hello", Duration::ZERO).is_err());
+        assert!(link_probe_params(433_920_000, b"hello", Duration::from_nanos(1)).is_err());
+        assert!(link_probe_params(
+            433_920_000,
+            b"hello",
+            Duration::from_millis(250) + Duration::from_nanos(1)
+        )
+        .is_err());
+        assert!(link_probe_params(433_920_000, b"hello", Duration::from_millis(5001)).is_err());
+        assert!(link_probe_params(
+            433_920_000,
+            b"hello",
+            Duration::from_millis(5000) + Duration::from_nanos(1)
+        )
+        .is_err());
+        assert!(link_probe_params(
+            433_920_000,
+            &[0xaa; MAX_LINK_PROBE_BYTES + 1],
+            Duration::from_millis(250)
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn parses_link_probe_result_map() {
+        let value = flip_proto::Value::Map(vec![
+            ("written".into(), flip_proto::Value::U64(5)),
+            ("read".into(), flip_proto::Value::U64(2)),
+            ("callbacks".into(), flip_proto::Value::U64(1)),
+            (
+                "rx_preview".into(),
+                flip_proto::Value::Bytes(vec![0xab, 0xcd]),
+            ),
+        ]);
+
+        assert_eq!(
+            link_probe_result(&value).unwrap(),
+            SubGhzLinkProbeResult {
+                written: 5,
+                read: 2,
+                callbacks: 1,
+                rx_preview: vec![0xab, 0xcd],
+            }
+        );
+    }
+
+    #[test]
+    fn link_probe_result_rejects_wrong_shape() {
+        assert!(link_probe_result(&flip_proto::Value::Map(vec![
+            ("read".into(), flip_proto::Value::U64(2)),
+            ("callbacks".into(), flip_proto::Value::U64(1)),
+            ("rx_preview".into(), flip_proto::Value::Bytes(vec![0xab])),
+        ]))
+        .is_err());
+
+        assert!(link_probe_result(&flip_proto::Value::Map(vec![
+            ("written".into(), flip_proto::Value::Text("5".into())),
+            ("read".into(), flip_proto::Value::U64(2)),
+            ("callbacks".into(), flip_proto::Value::U64(1)),
+            ("rx_preview".into(), flip_proto::Value::Bytes(vec![0xab])),
+        ]))
+        .is_err());
+
+        assert!(link_probe_result(&flip_proto::Value::Map(vec![
+            ("written".into(), flip_proto::Value::U64(5)),
+            ("read".into(), flip_proto::Value::U64(2)),
+            ("callbacks".into(), flip_proto::Value::U64(1)),
+            ("rx_preview".into(), flip_proto::Value::Text("ab".into())),
+        ]))
+        .is_err());
+
+        assert!(link_probe_result(&flip_proto::Value::Map(vec![
+            ("written".into(), flip_proto::Value::U64(5)),
+            ("read".into(), flip_proto::Value::U64(2)),
+            ("callbacks".into(), flip_proto::Value::U64(1)),
+            (
+                "rx_preview".into(),
+                flip_proto::Value::Bytes(vec![0xab; MAX_LINK_PROBE_BYTES + 1]),
+            ),
+        ]))
+        .is_err());
+    }
+
+    #[test]
+    fn parses_hex_probe_payload() {
+        assert_eq!(parse_probe_hex("0x6865 6c6c6f").unwrap(), b"hello");
+        assert!(parse_probe_hex("abc").is_err());
+        assert!(parse_probe_hex("zz").is_err());
+        let non_ascii = std::panic::catch_unwind(|| parse_probe_hex("€a"));
+        assert!(non_ascii.is_ok());
+        assert!(non_ascii.unwrap().is_err());
     }
 }
