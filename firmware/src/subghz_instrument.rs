@@ -308,13 +308,15 @@ pub fn link_probe(params: &Value) -> Result<Value, (u32, String)> {
     if unsafe { !sys::subghz_devices_is_frequency_valid(device, frequency) } {
         return Err((ERR_BAD_PARAMS, "invalid subghz frequency".to_string()));
     }
-    if unsafe { !sys::subghz_devices_begin(device) } {
-        return Err((ERR_BUSY, "subghz device unavailable".to_string()));
+    if unsafe { !sys::furi_hal_region_is_frequency_allowed(frequency) } {
+        return Err((
+            ERR_BAD_PARAMS,
+            "subghz link probe not allowed on this frequency".to_string(),
+        ));
     }
 
     let worker = unsafe { sys::subghz_tx_rx_worker_alloc() };
     if worker.is_null() {
-        unsafe { sys::subghz_devices_end(device) };
         return Err((ERR_INTERNAL, "subghz worker allocation failed".to_string()));
     }
 
@@ -323,18 +325,13 @@ pub fn link_probe(params: &Value) -> Result<Value, (u32, String)> {
         sys::subghz_tx_rx_worker_set_callback_have_read(
             worker,
             Some(link_probe_have_read),
-            core::ptr::null_mut(),
+            worker as *mut core::ffi::c_void,
         );
     }
 
     let started = unsafe { sys::subghz_tx_rx_worker_start(worker, device, frequency) };
     if !started {
-        unsafe {
-            sys::subghz_tx_rx_worker_free(worker);
-            sys::subghz_devices_idle(device);
-            sys::subghz_devices_sleep(device);
-            sys::subghz_devices_end(device);
-        }
+        unsafe { sys::subghz_tx_rx_worker_free(worker) };
         return Err((ERR_BUSY, "subghz link worker unavailable".to_string()));
     }
 
@@ -364,9 +361,6 @@ pub fn link_probe(params: &Value) -> Result<Value, (u32, String)> {
     unsafe {
         sys::subghz_tx_rx_worker_stop(worker);
         sys::subghz_tx_rx_worker_free(worker);
-        sys::subghz_devices_idle(device);
-        sys::subghz_devices_sleep(device);
-        sys::subghz_devices_end(device);
     }
 
     if !wrote {
