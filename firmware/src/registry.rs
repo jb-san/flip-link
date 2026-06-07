@@ -34,10 +34,16 @@ static IR_OPCODES: &[OpcodeEntry] = &[OpcodeEntry {
     handler: crate::ir_instrument::transmit,
 }];
 
-static SUBGHZ_OPCODES: &[OpcodeEntry] = &[OpcodeEntry {
-    opcode: "transmit",
-    handler: crate::subghz_instrument::transmit,
-}];
+static SUBGHZ_OPCODES: &[OpcodeEntry] = &[
+    OpcodeEntry {
+        opcode: "transmit",
+        handler: crate::subghz_instrument::transmit,
+    },
+    OpcodeEntry {
+        opcode: "link_probe",
+        handler: crate::subghz_instrument::link_probe,
+    },
+];
 
 static INSTRUMENTS: &[InstrumentEntry] = &[
     InstrumentEntry {

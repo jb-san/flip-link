@@ -257,6 +257,13 @@ pub fn transmit(params: &Value) -> Result<Value, (u32, String)> {
     )]))
 }
 
+pub fn link_probe(_params: &Value) -> Result<Value, (u32, String)> {
+    Err((
+        ERR_INTERNAL,
+        "subghz link probe not implemented".to_string(),
+    ))
+}
+
 pub fn capture_active() -> bool {
     CAPTURE_ACTIVE.load(Ordering::Acquire)
 }
