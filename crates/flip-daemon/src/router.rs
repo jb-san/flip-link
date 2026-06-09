@@ -3,7 +3,7 @@
 use flip_core::transport::OwnedFrame;
 use std::collections::HashMap;
 use std::sync::mpsc::Sender;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 #[derive(Default)]
 struct Inner {
@@ -28,9 +28,16 @@ impl Router {
         }
     }
 
+    fn lock(&self) -> MutexGuard<'_, Inner> {
+        match self.inner.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
     /// Allocate a unique device-side seq and register where its reply should go.
     pub fn register(&self, reply_to: Sender<OwnedFrame>) -> u16 {
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self.lock();
         let seq = g.next_seq;
         g.next_seq = g.next_seq.wrapping_add(1).max(1);
         g.routes.insert(seq, reply_to);
@@ -40,7 +47,7 @@ impl Router {
     /// Drop a pending route (e.g. on client-side timeout) so a late device reply
     /// can't be delivered into a stale channel and contaminate a later request.
     pub fn unregister(&self, seq: u16) {
-        self.inner.lock().unwrap().routes.remove(&seq);
+        self.lock().routes.remove(&seq);
     }
 
     /// Deliver an inbound device frame to the client that owns its seq (if any).
@@ -48,7 +55,7 @@ impl Router {
     /// (one reply) or stream (final STREAM_STOP) completes.
     pub fn deliver(&self, frame: OwnedFrame) {
         let sender = {
-            let g = self.inner.lock().unwrap();
+            let g = self.lock();
             g.routes.get(&frame.seq).cloned()
         };
         if let Some(tx) = sender {
@@ -57,10 +64,10 @@ impl Router {
     }
 
     pub fn set_caps(&self, payload: Vec<u8>) {
-        self.inner.lock().unwrap().caps_payload = payload;
+        self.lock().caps_payload = payload;
     }
 
     pub fn caps(&self) -> Vec<u8> {
-        self.inner.lock().unwrap().caps_payload.clone()
+        self.lock().caps_payload.clone()
     }
 }

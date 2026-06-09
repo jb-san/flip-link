@@ -28,7 +28,7 @@ impl<T: Transport> DeviceLink<T> {
     /// Send HELLO and await the CAPS body.
     pub fn hello(&mut self, timeout: Duration) -> Result<flip_proto::Caps> {
         let seq = self.alloc_seq();
-        let body = flip_proto::messages::to_payload(&flip_proto::Hello { host_version: 0 });
+        let body = flip_proto::messages::to_payload(&flip_proto::Hello { host_version: 0 })?;
         self.send(MsgType::Hello, seq, &body)?;
         let frame = self.await_seq(seq, timeout)?;
         match frame.typ {
@@ -52,7 +52,7 @@ impl<T: Transport> DeviceLink<T> {
             opcode: opcode.into(),
             params,
         };
-        let body = flip_proto::messages::to_payload(&req);
+        let body = flip_proto::messages::to_payload(&req)?;
         self.send(MsgType::Req, seq, &body)?;
         let frame = self.await_seq(seq, timeout)?;
         match frame.typ {

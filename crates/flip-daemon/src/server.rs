@@ -90,7 +90,7 @@ fn serve_client(
                     let body = flip_proto::messages::to_payload(&flip_proto::AgentError {
                         code: flip_proto::messages::ERR_INTERNAL,
                         message: "device not connected".into(),
-                    });
+                    })?;
                     write_frame(&mut stream, MsgType::Error, frame.seq, &body)?;
                 } else {
                     write_frame(&mut stream, MsgType::Caps, frame.seq, &caps)?;
@@ -100,7 +100,7 @@ fn serve_client(
             // Proxy: rewrite seq, forward to device, await the first reply.
             let client_seq = frame.seq;
             let dev_seq = router.register(reply_tx.clone());
-            forward(&outbound, frame.typ, frame.flags, dev_seq, &frame.payload);
+            forward(&outbound, frame.typ, frame.flags, dev_seq, &frame.payload)?;
 
             match reply_rx.recv_timeout(Duration::from_secs(3)) {
                 Ok(reply) if reply.typ == MsgType::StreamStart => {
@@ -125,7 +125,7 @@ fn serve_client(
                     let body = flip_proto::messages::to_payload(&flip_proto::AgentError {
                         code: flip_proto::messages::ERR_INTERNAL,
                         message: "device timeout".into(),
-                    });
+                    })?;
                     write_frame(&mut stream, MsgType::Error, client_seq, &body)?;
                 }
             }
@@ -135,16 +135,25 @@ fn serve_client(
 
 fn write_frame(stream: &mut UnixStream, typ: MsgType, seq: u16, payload: &[u8]) -> Result<()> {
     let mut buf = vec![0u8; flip_proto::HEADER_SIZE + payload.len() + 2];
-    let n = flip_proto::encode(typ, 0, seq, payload, &mut buf).expect("frame");
+    let n = flip_proto::encode(typ, 0, seq, payload, &mut buf)
+        .ok_or_else(|| anyhow::anyhow!("frame too large"))?;
     stream.write_all(&buf[..n])?;
     Ok(())
 }
 
 /// Frame `payload` with a (rewritten) seq and queue it to the device.
-fn forward(outbound: &Sender<Vec<u8>>, typ: MsgType, flags: u8, seq: u16, payload: &[u8]) {
+fn forward(
+    outbound: &Sender<Vec<u8>>,
+    typ: MsgType,
+    flags: u8,
+    seq: u16,
+    payload: &[u8],
+) -> Result<()> {
     let mut buf = vec![0u8; flip_proto::HEADER_SIZE + payload.len() + 2];
-    let n = flip_proto::encode(typ, flags, seq, payload, &mut buf).expect("reframe");
+    let n = flip_proto::encode(typ, flags, seq, payload, &mut buf)
+        .ok_or_else(|| anyhow::anyhow!("frame too large"))?;
     let _ = outbound.send(buf[..n].to_vec());
+    Ok(())
 }
 
 /// Bidirectional relay for an active stream: device STREAM_DATA/STOP -> client,
@@ -190,7 +199,7 @@ fn relay_stream_with_stop_timeout(
                 let body = flip_proto::messages::to_payload(&flip_proto::AgentError {
                     code: flip_proto::messages::ERR_INTERNAL,
                     message: "device timeout waiting for stream stop".into(),
-                });
+                })?;
                 write_frame(stream, MsgType::Error, client_seq, &body)?;
                 router.unregister(dev_seq);
                 return Ok(());
@@ -200,7 +209,7 @@ fn relay_stream_with_stop_timeout(
         match stream.read(&mut scratch) {
             Ok(0) => {
                 // Client hung up mid-stream: ask the device to stop, then exit.
-                forward(outbound, MsgType::StreamStop, 0, dev_seq, &[]);
+                forward(outbound, MsgType::StreamStop, 0, dev_seq, &[])?;
                 router.unregister(dev_seq);
                 return Ok(());
             }
@@ -208,7 +217,7 @@ fn relay_stream_with_stop_timeout(
                 reader.feed(&scratch[..n]);
                 while let Some(f) = reader.next_frame() {
                     if f.typ == MsgType::StreamStop {
-                        forward(outbound, MsgType::StreamStop, 0, dev_seq, &[]);
+                        forward(outbound, MsgType::StreamStop, 0, dev_seq, &[])?;
                         stop_deadline
                             .get_or_insert_with(|| std::time::Instant::now() + stop_timeout);
                     }

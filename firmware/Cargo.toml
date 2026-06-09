@@ -23,3 +23,10 @@ flipperzero-rt = "0.16.0"
 flipperzero-alloc = "0.16.0"
 flip-proto = { path = "../crates/flip-proto", features = ["alloc"] }
 minicbor = { version = "2.2", default-features = false }
+
+[lints.clippy]
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unwrap_used = "deny"

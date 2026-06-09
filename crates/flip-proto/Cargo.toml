@@ -10,3 +10,6 @@ minicbor = { version = "2.2", default-features = false, features = ["derive"] }
 [features]
 default = []
 alloc = ["minicbor/alloc"]
+
+[lints]
+workspace = true

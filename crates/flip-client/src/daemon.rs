@@ -131,7 +131,16 @@ pub fn status() -> DaemonStatus {
 
     let mut transport = StreamTransport(stream);
     let mut reader = FrameReader::new();
-    let hello = flip_proto::messages::to_payload(&flip_proto::Hello { host_version: 0 });
+    let hello = match flip_proto::messages::to_payload(&flip_proto::Hello { host_version: 0 }) {
+        Ok(hello) => hello,
+        Err(_) => {
+            return DaemonStatus {
+                daemon_running: true,
+                device: DeviceStatus::Unknown("encode HELLO failed".to_string()),
+                log_path,
+            };
+        }
+    };
     let mut buf = vec![0u8; flip_proto::HEADER_SIZE + hello.len() + 2];
     let n = match encode(MsgType::Hello, 0, 1, &hello, &mut buf) {
         Some(n) => n,
@@ -228,7 +237,7 @@ fn round_trip(typ: MsgType, payload: &[u8], timeout: Duration) -> Result<(MsgTyp
 
 /// Fetch capabilities (HELLO -> CAPS) via the daemon.
 pub fn caps(timeout: Duration) -> Result<flip_proto::Caps> {
-    let hello = flip_proto::messages::to_payload(&flip_proto::Hello { host_version: 0 });
+    let hello = flip_proto::messages::to_payload(&flip_proto::Hello { host_version: 0 })?;
     let (typ, payload) = round_trip(MsgType::Hello, &hello, timeout)?;
     match typ {
         MsgType::Caps => {
@@ -250,7 +259,7 @@ pub fn invoke(
         opcode: opcode.to_string(),
         params,
     };
-    let body = flip_proto::messages::to_payload(&req);
+    let body = flip_proto::messages::to_payload(&req)?;
     let (typ, payload) = round_trip(MsgType::Req, &body, timeout)?;
     match typ {
         MsgType::Resp => {
@@ -316,7 +325,7 @@ pub fn open_stream(
         opcode: opcode.to_string(),
         params,
     };
-    let body = flip_proto::messages::to_payload(&req);
+    let body = flip_proto::messages::to_payload(&req)?;
     let mut buf = vec![0u8; flip_proto::HEADER_SIZE + body.len() + 2];
     let n =
         encode(MsgType::Req, 0, 1, &body, &mut buf).ok_or_else(|| anyhow!("payload too big"))?;

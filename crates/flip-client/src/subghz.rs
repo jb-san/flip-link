@@ -191,7 +191,7 @@ pub fn parse_probe_hex(input: &str) -> Result<Vec<u8>> {
     {
         return Err(anyhow!("hex payload contains non-hex digits"));
     }
-    if cleaned.len() % 2 != 0 {
+    if !cleaned.len().is_multiple_of(2) {
         return Err(anyhow!("hex payload must contain an even number of digits"));
     }
 
@@ -213,7 +213,7 @@ pub(crate) fn link_probe_params(
     validate_probe_payload(payload)?;
     if timeout < Duration::from_millis(MIN_LINK_PROBE_TIMEOUT_MS)
         || timeout > Duration::from_millis(MAX_LINK_PROBE_TIMEOUT_MS)
-        || timeout.subsec_nanos() % 1_000_000 != 0
+        || !timeout.subsec_nanos().is_multiple_of(1_000_000)
     {
         return Err(anyhow!(
             "link probe timeout must be whole milliseconds in {}..={} ms",

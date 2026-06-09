@@ -25,10 +25,14 @@ build:
 test:
     cargo test
 
+# Run clippy with the repo lint policy.
+clippy:
+    cargo clippy --workspace --all-targets -- -D warnings
+
 # Format + lint check (CI-style; fails on any diff or warning).
 check:
     cargo fmt --all -- --check
-    cargo clippy --workspace --all-targets -- -D warnings
+    just clippy
 
 # Apply rustfmt to host + firmware.
 fmt:
@@ -40,6 +44,10 @@ fmt:
 # Build the on-device firmware (.fap).
 fw-build:
     cd firmware && cargo build --release
+
+# Run clippy for the standalone firmware package.
+fw-clippy:
+    cd firmware && cargo clippy --release -- -D warnings
 
 # Build, upload, and LAUNCH the FAP on a connected Flipper.
 # This switches the device to dual-CDC and re-enumerates once (expected).

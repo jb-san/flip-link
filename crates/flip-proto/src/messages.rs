@@ -86,10 +86,12 @@ pub const STREAM_FORMAT_RAW_I32_US: &str = "raw_int32_le_us";
 pub const STREAM_FORMAT_SUBGHZ_LEVEL_DURATION_V1: &str = "subghz_level_duration_le_v1";
 
 /// Encode any control body to a `Vec<u8>` (the frame payload).
-pub fn to_payload<T: minicbor::Encode<()>>(msg: &T) -> Vec<u8> {
+pub fn to_payload<T: minicbor::Encode<()>>(
+    msg: &T,
+) -> Result<Vec<u8>, minicbor::encode::Error<core::convert::Infallible>> {
     let mut buf = Vec::new();
-    minicbor::encode(msg, &mut buf).expect("encode to Vec is infallible");
-    buf
+    minicbor::encode(msg, &mut buf)?;
+    Ok(buf)
 }
 
 /// Decode a control body from a frame payload.
@@ -114,7 +116,7 @@ mod tests {
                 Value::Text("hi".to_string())
             )]),
         };
-        let payload = to_payload(&req);
+        let payload = to_payload(&req).unwrap();
         let back: Req = from_payload(&payload).unwrap();
         assert_eq!(back, req);
     }
@@ -124,9 +126,15 @@ mod tests {
         let s = StreamStart {
             format: STREAM_FORMAT_RAW_I32_US.to_string(),
         };
-        assert_eq!(from_payload::<StreamStart>(&to_payload(&s)).unwrap(), s);
+        assert_eq!(
+            from_payload::<StreamStart>(&to_payload(&s).unwrap()).unwrap(),
+            s
+        );
         let p = StreamStop { dropped: 3 };
-        assert_eq!(from_payload::<StreamStop>(&to_payload(&p)).unwrap(), p);
+        assert_eq!(
+            from_payload::<StreamStop>(&to_payload(&p).unwrap()).unwrap(),
+            p
+        );
         assert_eq!(
             STREAM_FORMAT_SUBGHZ_LEVEL_DURATION_V1,
             "subghz_level_duration_le_v1"
@@ -142,7 +150,7 @@ mod tests {
                 opcodes: alloc::vec!["version".to_string(), "echo".to_string()],
             }],
         };
-        let payload = to_payload(&caps);
+        let payload = to_payload(&caps).unwrap();
         let back: Caps = from_payload(&payload).unwrap();
         assert_eq!(back, caps);
     }

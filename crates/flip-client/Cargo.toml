@@ -8,3 +8,6 @@ license.workspace = true
 flip-core = { path = "../flip-core" }
 flip-proto = { path = "../flip-proto", features = ["alloc"] }
 anyhow = { workspace = true }
+
+[lints]
+workspace = true

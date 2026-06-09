@@ -6,7 +6,7 @@
 //! daemon spinning forever (and spamming logs) while the FAP is not running.
 
 use crate::router::Router;
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use flip_core::serial::{pick_agent_port, SerialTransport};
 use flip_core::transport::{FrameReader, Transport};
 use flip_proto::MsgType;
@@ -112,9 +112,11 @@ fn write_outbound_frame(
 
 /// Send HELLO and wait for CAPS, caching its payload. Times out after 2s.
 fn cache_caps(router: &Router, device: &mut SerialTransport) -> Result<()> {
-    let hello = flip_proto::messages::to_payload(&flip_proto::Hello { host_version: 0 });
+    let hello = flip_proto::messages::to_payload(&flip_proto::Hello { host_version: 0 })
+        .context("encode HELLO")?;
     let mut buf = vec![0u8; flip_proto::HEADER_SIZE + hello.len() + 2];
-    let n = flip_proto::encode(MsgType::Hello, 0, 0, &hello, &mut buf).unwrap();
+    let n = flip_proto::encode(MsgType::Hello, 0, 0, &hello, &mut buf)
+        .ok_or_else(|| anyhow!("HELLO frame too large"))?;
     device.write_all(&buf[..n])?;
 
     let mut reader = FrameReader::new();

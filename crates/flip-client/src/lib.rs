@@ -377,14 +377,16 @@ mod tests {
 
     #[test]
     fn capture_stop_allows_clean_stop() {
-        let payload = flip_proto::messages::to_payload(&flip_proto::StreamStop { dropped: 0 });
+        let payload =
+            flip_proto::messages::to_payload(&flip_proto::StreamStop { dropped: 0 }).unwrap();
 
         assert!(handle_capture_stop(&payload).is_ok());
     }
 
     #[test]
     fn capture_stop_rejects_dropped_samples() {
-        let payload = flip_proto::messages::to_payload(&flip_proto::StreamStop { dropped: 2 });
+        let payload =
+            flip_proto::messages::to_payload(&flip_proto::StreamStop { dropped: 2 }).unwrap();
         let err = handle_capture_stop(&payload).unwrap_err();
 
         assert_eq!(
@@ -404,7 +406,8 @@ mod tests {
     fn capture_stream_start_accepts_raw_i32_format() {
         let payload = flip_proto::messages::to_payload(&flip_proto::StreamStart {
             format: flip_proto::messages::STREAM_FORMAT_RAW_I32_US.to_string(),
-        });
+        })
+        .unwrap();
 
         assert!(validate_capture_stream_start_frame(MsgType::StreamStart, &payload).is_ok());
     }
@@ -413,7 +416,8 @@ mod tests {
     fn capture_stream_start_rejects_wrong_format() {
         let payload = flip_proto::messages::to_payload(&flip_proto::StreamStart {
             format: "raw_f32".to_string(),
-        });
+        })
+        .unwrap();
         let err = validate_capture_stream_start_frame(MsgType::StreamStart, &payload).unwrap_err();
 
         assert_eq!(
@@ -433,7 +437,8 @@ mod tests {
     fn subghz_stream_start_accepts_subghz_format() {
         let payload = flip_proto::messages::to_payload(&flip_proto::StreamStart {
             format: flip_proto::messages::STREAM_FORMAT_SUBGHZ_LEVEL_DURATION_V1.to_string(),
-        });
+        })
+        .unwrap();
 
         assert!(validate_subghz_stream_start_frame(MsgType::StreamStart, &payload).is_ok());
     }
@@ -442,7 +447,8 @@ mod tests {
     fn subghz_stream_start_rejects_wrong_format() {
         let payload = flip_proto::messages::to_payload(&flip_proto::StreamStart {
             format: flip_proto::messages::STREAM_FORMAT_RAW_I32_US.to_string(),
-        });
+        })
+        .unwrap();
         let err = validate_subghz_stream_start_frame(MsgType::StreamStart, &payload).unwrap_err();
 
         assert_eq!(

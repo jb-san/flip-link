@@ -139,7 +139,9 @@ fn cdc_send_all(bytes: &[u8]) {
 /// nested under main's buffers + the minicbor decode, so a stack array here can
 /// overflow the FAP stack (MPU fault).
 fn send_msg<T: minicbor::Encode<()>>(typ: MsgType, seq: u16, body: &T) {
-    let payload = flip_proto::messages::to_payload(body);
+    let Ok(payload) = flip_proto::messages::to_payload(body) else {
+        return;
+    };
     let mut frame = alloc::vec![0u8; flip_proto::HEADER_SIZE + payload.len() + 2];
     if let Some(n) = encode(typ, 0, seq, &payload, &mut frame) {
         cdc_send_all(&frame[..n]);

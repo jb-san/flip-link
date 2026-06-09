@@ -9,3 +9,6 @@ flip-core = { path = "../flip-core" }
 flip-proto = { path = "../flip-proto", features = ["alloc"] }
 anyhow = { workspace = true }
 clap = { workspace = true }
+
+[lints]
+workspace = true

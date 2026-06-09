@@ -28,13 +28,15 @@ pub fn pick_agent_port() -> Result<String> {
     if let Ok(p) = std::env::var("FLIP_PORT") {
         return Ok(p);
     }
-    let ports = list_flipper_ports()?;
+    let mut ports = list_flipper_ports()?;
     match ports.len() {
         0 => Err(anyhow!(
             "no Flipper serial ports found (is it connected and the FAP running?)"
         )),
-        1 => Ok(ports.into_iter().next().unwrap()),
-        _ => Ok(ports.into_iter().last().unwrap()), // sorted; highest = interface 1
+        1 => Ok(ports.remove(0)),
+        _ => ports
+            .pop()
+            .ok_or_else(|| anyhow!("no Flipper serial ports found after filtering")),
     }
 }
 

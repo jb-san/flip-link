@@ -83,7 +83,7 @@ pub fn is_streaming(instrument: &str, opcode: &str) -> bool {
     INSTRUMENTS
         .iter()
         .find(|i| i.id == instrument)
-        .map(|i| i.streaming_opcodes.iter().any(|s| *s == opcode))
+        .map(|i| i.streaming_opcodes.contains(&opcode))
         .unwrap_or(false)
 }
 

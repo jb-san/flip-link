@@ -8,3 +8,6 @@ license.workspace = true
 flip-proto = { path = "../flip-proto", features = ["alloc"] }
 serialport = { workspace = true }
 anyhow = { workspace = true }
+
+[lints]
+workspace = true

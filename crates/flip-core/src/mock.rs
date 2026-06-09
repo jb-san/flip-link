@@ -1,5 +1,5 @@
 use crate::transport::{FrameReader, Transport};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use flip_proto::messages::{
     from_payload, to_payload, Caps, Instrument, Req, Resp, PROTOCOL_VERSION,
 };
@@ -34,8 +34,8 @@ impl Transport for PongLoopback {
         while let Some(f) = self.reader.next_frame() {
             if f.typ == MsgType::Ping {
                 let mut enc = [0u8; 1100];
-                let n =
-                    encode(MsgType::Pong, 0, f.seq, &f.payload, &mut enc).expect("pong encodes");
+                let n = encode(MsgType::Pong, 0, f.seq, &f.payload, &mut enc)
+                    .ok_or_else(|| anyhow!("pong frame too large"))?;
                 self.out.extend(&enc[..n]);
             }
         }
@@ -70,10 +70,12 @@ impl ControlLoopback {
             reader: FrameReader::new(),
         }
     }
-    fn queue(&mut self, typ: MsgType, seq: u16, body: &[u8]) {
+    fn queue(&mut self, typ: MsgType, seq: u16, body: &[u8]) -> Result<()> {
         let mut enc = vec![0u8; flip_proto::HEADER_SIZE + body.len() + 2];
-        let n = flip_proto::encode(typ, 0, seq, body, &mut enc).unwrap();
+        let n = flip_proto::encode(typ, 0, seq, body, &mut enc)
+            .ok_or_else(|| anyhow!("loopback frame too large"))?;
         self.out.extend(&enc[..n]);
+        Ok(())
     }
 }
 
@@ -96,18 +98,19 @@ impl Transport for ControlLoopback {
                             opcodes: vec!["version".to_string(), "echo".to_string()],
                         }],
                     };
-                    let body = to_payload(&caps);
-                    self.queue(MsgType::Caps, f.seq, &body);
+                    let body = to_payload(&caps)?;
+                    self.queue(MsgType::Caps, f.seq, &body)?;
                 }
                 MsgType::Req => {
-                    let req: Req = from_payload(&f.payload).unwrap();
+                    let req: Req = from_payload(&f.payload)
+                        .map_err(|e| anyhow!("decode loopback REQ: {e}"))?;
                     let result = if req.opcode == "echo" {
                         req.params
                     } else {
                         Value::Null
                     };
-                    let body = to_payload(&Resp { ok: true, result });
-                    self.queue(MsgType::Resp, f.seq, &body);
+                    let body = to_payload(&Resp { ok: true, result })?;
+                    self.queue(MsgType::Resp, f.seq, &body)?;
                 }
                 _ => {}
             }
